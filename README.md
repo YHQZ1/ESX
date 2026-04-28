@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="https://cdn.brandfetch.io/idOOGS0oFC/idN3Ai6Nko.svg?c=1bxid64Mup7aczewSAYMX&t=1651825673631" height="72" alt="NASDAQ" />
+<img src="https://cdn.brandfetch.io/idOOGS0oFC/idN3Ai6Nko.svg?c=1bxid64Mup7aczewSAYMX&t=1651825673631" height="52" alt="NASDAQ" style="vertical-align: middle;" />
 &nbsp;&nbsp;&nbsp;&nbsp;
-<img src="https://cdn.brandfetch.io/idLb1SWTJA/theme/dark/logo.svg?c=1bxid64Mup7aczewSAYMX&t=1746508392065" height="72" alt="NSE" />
+<img src="https://cdn.brandfetch.io/idLb1SWTJA/theme/dark/logo.svg?c=1bxid64Mup7aczewSAYMX&t=1746508392065" height="72" alt="NSE" style="vertical-align: middle;" />
 
 <h1>ESX — Escrow Stock Exchange</h1>
 
