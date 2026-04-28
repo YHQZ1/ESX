@@ -1,0 +1,12 @@
+go 1.25.5
+
+use (
+	./services/clearing-house
+	./services/ledger-service
+	./services/market-data-feed
+	./services/matching-engine
+	./services/order-gateway
+	./services/participant-registry
+	./services/risk-engine
+	./services/settlement-engine
+)
