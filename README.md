@@ -2,6 +2,8 @@
 
 <img src="https://cdn.brandfetch.io/idOOGS0oFC/idN3Ai6Nko.svg?c=1bxid64Mup7aczewSAYMX&t=1651825673631" height="52" alt="NASDAQ" style="vertical-align: middle;" />
 &nbsp;&nbsp;&nbsp;&nbsp;
+<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/50/BSE_logo.svg/3840px-BSE_logo.svg.png" height="72" alt="BSE" style="vertical-align: middle;" />
+&nbsp;&nbsp;&nbsp;&nbsp;
 <img src="https://cdn.brandfetch.io/idLb1SWTJA/theme/dark/logo.svg?c=1bxid64Mup7aczewSAYMX&t=1746508392065" height="72" alt="NSE" style="vertical-align: middle;" />
 
 <h1>ESX — Escrow Stock Exchange</h1>
@@ -22,7 +24,7 @@ the same core systems that run NASDAQ, NSE, and BSE, rebuilt from the ground up.
 <img src="https://img.shields.io/badge/Terraform-IaC-7B42BC?style=flat-square&logo=terraform&logoColor=white" />
 <img src="https://img.shields.io/badge/FIX_Protocol-4.2-000000?style=flat-square" />
 
-<br /><br />
+<br />
 
 <p>
   <a href="#what-esx-is">What ESX is</a> &nbsp;·&nbsp;
