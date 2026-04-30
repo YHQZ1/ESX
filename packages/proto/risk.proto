@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package risk;
+
+option go_package = "github.com/YHQZ1/esx/packages/proto/risk";
+
+service RiskService {
+  rpc CheckAndLock(CheckAndLockRequest) returns (CheckAndLockResponse);
+  rpc ReleaseLock(ReleaseLockRequest)   returns (ReleaseLockResponse);
+}
+
+enum OrderSide {
+  ORDER_SIDE_UNSPECIFIED = 0;
+  ORDER_SIDE_BUY         = 1;
+  ORDER_SIDE_SELL        = 2;
+}
+
+message CheckAndLockRequest {
+  string    participant_id = 1;
+  string    symbol         = 2;
+  OrderSide side           = 3;
+  int64     quantity       = 4;
+  int64     price          = 5;
+}
+
+message CheckAndLockResponse {
+  bool   approved  = 1;
+  string lock_id   = 2;
+  string reason    = 3;
+}
+
+message ReleaseLockRequest {
+  string lock_id        = 1;
+  int64  filled_quantity = 2;
+}
+
+message ReleaseLockResponse {
+  bool released = 1;
+}

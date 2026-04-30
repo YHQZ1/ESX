@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package participant;
+
+option go_package = "github.com/YHQZ1/esx/packages/proto/participant";
+
+service ParticipantService {
+  rpc ValidateAPIKey(ValidateAPIKeyRequest) returns (ValidateAPIKeyResponse);
+}
+
+message ValidateAPIKeyRequest {
+  string api_key = 1;
+}
+
+message ValidateAPIKeyResponse {
+  string participant_id = 1;
+  string name           = 2;
+  bool   is_active      = 3;
+}

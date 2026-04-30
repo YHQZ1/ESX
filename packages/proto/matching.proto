@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package matching;
+
+option go_package = "github.com/YHQZ1/esx/packages/proto/matching";
+
+service MatchingService {
+  rpc SubmitOrder(SubmitOrderRequest) returns (SubmitOrderResponse);
+  rpc CancelOrder(CancelOrderRequest) returns (CancelOrderResponse);
+}
+
+enum OrderSide {
+  ORDER_SIDE_UNSPECIFIED = 0;
+  ORDER_SIDE_BUY         = 1;
+  ORDER_SIDE_SELL        = 2;
+}
+
+enum OrderType {
+  ORDER_TYPE_UNSPECIFIED = 0;
+  ORDER_TYPE_MARKET      = 1;
+  ORDER_TYPE_LIMIT       = 2;
+  ORDER_TYPE_STOP        = 3;
+}
+
+enum TimeInForce {
+  TIME_IN_FORCE_UNSPECIFIED = 0;
+  TIME_IN_FORCE_GTC         = 1;
+  TIME_IN_FORCE_IOC         = 2;
+}
+
+message SubmitOrderRequest {
+  string      participant_id = 1;
+  string      symbol         = 2;
+  OrderSide   side           = 3;
+  OrderType   type           = 4;
+  TimeInForce time_in_force  = 5;
+  int64       quantity       = 6;
+  int64       price          = 7;
+  string      lock_id        = 8;
+}
+
+message SubmitOrderResponse {
+  string order_id = 1;
+  string status   = 2;
+}
+
+message CancelOrderRequest {
+  string order_id       = 1;
+  string participant_id = 2;
+}
+
+message CancelOrderResponse {
+  bool   cancelled = 1;
+  string reason    = 2;
+}
