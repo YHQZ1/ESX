@@ -2,87 +2,83 @@ package locks
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
-
-	"github.com/YHQZ1/esx/services/risk-engine/internal/checks"
 	"github.com/YHQZ1/esx/services/risk-engine/internal/db"
+	"github.com/google/uuid"
 )
 
 type Manager struct {
-	db      *db.DB
-	checker *checks.Checker
+	db db.Querier
 }
 
-func New(database *db.DB, checker *checks.Checker) *Manager {
-	return &Manager{db: database, checker: checker}
+func New(database db.Querier) *Manager {
+	return &Manager{db: database}
 }
 
-type LockResult struct {
-	LockID       string
-	LockedAmount int64
-}
-
-func (m *Manager) LockForBuy(ctx context.Context, participantID, symbol string, quantity, price int64) (*LockResult, error) {
-	result, err := m.checker.CheckBuy(ctx, participantID, symbol, quantity, price)
+func (m *Manager) LockCash(ctx context.Context, participantID uuid.UUID, symbol string, price, quantity int64) (uuid.UUID, error) {
+	lock, err := m.db.CreateLock(ctx, db.CreateLockParams{
+		ParticipantID: participantID,
+		Symbol:        symbol,
+		Side:          "BUY",
+		Quantity:      quantity,
+		Price:         price,
+	})
 	if err != nil {
-		return nil, err
+		return uuid.Nil, fmt.Errorf("failed to create lock: %w", err)
 	}
 
-	lockID := uuid.New().String()
-	err = m.db.CreateLockAndIncrementCashLocked(ctx, lockID, participantID, symbol, quantity, price, result.RequiredAmount)
-	if err != nil {
-		return nil, fmt.Errorf("create cash lock: %w", err)
+	if err := m.db.IncrementCashLocked(ctx, participantID, price*quantity); err != nil {
+		return uuid.Nil, fmt.Errorf("failed to increment cash locked: %w", err)
 	}
 
-	return &LockResult{
-		LockID:       lockID,
-		LockedAmount: result.RequiredAmount,
-	}, nil
+	return lock.ID, nil
 }
 
-func (m *Manager) LockForSell(ctx context.Context, participantID, symbol string, quantity, price int64) (*LockResult, error) {
-	_, err := m.checker.CheckSell(ctx, participantID, symbol, quantity)
+func (m *Manager) LockShares(ctx context.Context, participantID uuid.UUID, symbol string, quantity int64) (uuid.UUID, error) {
+	lock, err := m.db.CreateLock(ctx, db.CreateLockParams{
+		ParticipantID: participantID,
+		Symbol:        symbol,
+		Side:          "SELL",
+		Quantity:      quantity,
+		Price:         0,
+	})
 	if err != nil {
-		return nil, err
+		return uuid.Nil, fmt.Errorf("failed to create lock: %w", err)
 	}
 
-	lockID := uuid.New().String()
-	err = m.db.CreateLockAndIncrementSharesLocked(ctx, lockID, participantID, symbol, quantity, price)
-	if err != nil {
-		return nil, fmt.Errorf("create shares lock: %w", err)
+	if err := m.db.IncrementSecuritiesLocked(ctx, participantID, symbol, quantity); err != nil {
+		return uuid.Nil, fmt.Errorf("failed to increment securities locked: %w", err)
 	}
 
-	return &LockResult{
-		LockID:       lockID,
-		LockedAmount: quantity,
-	}, nil
+	return lock.ID, nil
 }
 
-func (m *Manager) Release(ctx context.Context, lockID string) error {
+func (m *Manager) Release(ctx context.Context, lockID uuid.UUID, filledQuantity int64) error {
 	lock, err := m.db.GetLock(ctx, lockID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return fmt.Errorf("lock %s not found", lockID)
-		}
-		return fmt.Errorf("fetch lock: %w", err)
+		return fmt.Errorf("lock not found: %w", err)
+	}
+
+	if lock.Status != "active" {
+		return fmt.Errorf("lock is not active")
 	}
 
 	if lock.Side == "BUY" {
-		return m.db.ReleaseCashLock(ctx, lockID, lock.LockedAmount)
-	}
-	return m.db.ReleaseSharesLock(ctx, lockID, lock.LockedAmount)
-}
-
-func (m *Manager) Consume(ctx context.Context, lockID string) error {
-	_, err := m.db.GetLock(ctx, lockID)
-	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return fmt.Errorf("lock %s not found", lockID)
+		releaseAmount := lock.Price * (lock.Quantity - filledQuantity)
+		if releaseAmount > 0 {
+			if err := m.db.DecrementCashLocked(ctx, lock.ParticipantID, releaseAmount); err != nil {
+				return fmt.Errorf("failed to decrement cash locked: %w", err)
+			}
 		}
-		return fmt.Errorf("fetch lock: %w", err)
+	} else {
+		releaseQuantity := lock.Quantity - filledQuantity
+		if releaseQuantity > 0 {
+			if err := m.db.DecrementSecuritiesLocked(ctx, lock.ParticipantID, lock.Symbol, releaseQuantity); err != nil {
+				return fmt.Errorf("failed to decrement securities locked: %w", err)
+			}
+		}
 	}
-	return m.db.ConsumeLock(ctx, lockID)
+
+	return m.db.UpdateLockStatus(ctx, lockID, "released")
 }

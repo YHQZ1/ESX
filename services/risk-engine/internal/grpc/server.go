@@ -2,118 +2,97 @@ package grpc
 
 import (
 	"context"
-	"errors"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
-	riskpb "github.com/YHQZ1/esx/packages/proto/risk"
+	"github.com/YHQZ1/esx/packages/logger"
+	pb "github.com/YHQZ1/esx/packages/proto/risk"
 	"github.com/YHQZ1/esx/services/risk-engine/internal/checks"
 	"github.com/YHQZ1/esx/services/risk-engine/internal/locks"
-	"github.com/rs/zerolog"
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type Server struct {
-	riskpb.UnimplementedRiskServiceServer
-	locks *locks.Manager
-	log   zerolog.Logger
+	pb.UnimplementedRiskServiceServer
+	checker *checks.Checker
+	locker  *locks.Manager
+	log     *logger.Logger
 }
 
-func NewServer(lockManager *locks.Manager, log zerolog.Logger) *Server {
-	return &Server{locks: lockManager, log: log}
+func NewServer(checker *checks.Checker, locker *locks.Manager, log *logger.Logger) *Server {
+	return &Server{checker: checker, locker: locker, log: log}
 }
 
-func (s *Server) CheckAndLock(ctx context.Context, req *riskpb.CheckAndLockRequest) (*riskpb.CheckAndLockResponse, error) {
-	if req.ParticipantId == "" {
-		return nil, status.Error(codes.InvalidArgument, "participant_id is required")
-	}
-	if req.Symbol == "" {
-		return nil, status.Error(codes.InvalidArgument, "symbol is required")
-	}
-	if req.Quantity <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "quantity must be greater than zero")
-	}
-	if req.Side == riskpb.OrderSide_ORDER_SIDE_UNSPECIFIED {
-		return nil, status.Error(codes.InvalidArgument, "side is required")
-	}
-
-	var result *locks.LockResult
-	var err error
-
-	switch req.Side {
-	case riskpb.OrderSide_ORDER_SIDE_BUY:
-		if req.Price <= 0 {
-			return nil, status.Error(codes.InvalidArgument, "price must be greater than zero for buy orders")
-		}
-		result, err = s.locks.LockForBuy(ctx, req.ParticipantId, req.Symbol, req.Quantity, req.Price)
-	case riskpb.OrderSide_ORDER_SIDE_SELL:
-		result, err = s.locks.LockForSell(ctx, req.ParticipantId, req.Symbol, req.Quantity, req.Price)
-	default:
-		return nil, status.Error(codes.InvalidArgument, "unrecognised order side")
-	}
-
+func (s *Server) CheckAndLock(ctx context.Context, req *pb.CheckAndLockRequest) (*pb.CheckAndLockResponse, error) {
+	participantID, err := uuid.Parse(req.ParticipantId)
 	if err != nil {
-		s.log.Warn().
-			Str("participant_id", req.ParticipantId).
-			Str("symbol", req.Symbol).
-			Int32("side", int32(req.Side)).
-			Int64("quantity", req.Quantity).
-			Int64("price", req.Price).
-			Err(err).
-			Msg("risk check failed")
-
-		if errors.Is(err, checks.ErrInsufficientCash) || errors.Is(err, checks.ErrInsufficientShares) {
-			return &riskpb.CheckAndLockResponse{Approved: false, Reason: err.Error()}, nil
-		}
-		if errors.Is(err, checks.ErrAccountNotFound) {
-			return nil, status.Error(codes.NotFound, err.Error())
-		}
-		if errors.Is(err, checks.ErrInvalidPrice) || errors.Is(err, checks.ErrInvalidQuantity) {
-			return nil, status.Error(codes.InvalidArgument, err.Error())
-		}
-		return nil, status.Error(codes.Internal, "internal error")
+		return nil, status.Error(codes.InvalidArgument, "invalid participant_id")
 	}
 
-	s.log.Info().
-		Str("participant_id", req.ParticipantId).
-		Str("symbol", req.Symbol).
-		Int32("side", int32(req.Side)).
-		Int64("quantity", req.Quantity).
-		Int64("price", req.Price).
-		Str("lock_id", result.LockID).
-		Msg("collateral locked")
+	if req.Side == pb.OrderSide_ORDER_SIDE_BUY {
+		if err := s.checker.CheckBuy(ctx, participantID, req.Price, req.Quantity); err != nil {
+			s.log.Info("risk check rejected",
+				logger.Str("participant_id", req.ParticipantId),
+				logger.Str("symbol", req.Symbol),
+				logger.Str("reason", err.Error()),
+			)
+			return &pb.CheckAndLockResponse{Approved: false, Reason: err.Error()}, nil
+		}
 
-	return &riskpb.CheckAndLockResponse{
-		Approved: true,
-		LockId:   result.LockID,
-	}, nil
+		lockID, err := s.locker.LockCash(ctx, participantID, req.Symbol, req.Price, req.Quantity)
+		if err != nil {
+			s.log.Error("failed to lock cash", err, logger.Str("participant_id", req.ParticipantId))
+			return nil, status.Error(codes.Internal, "failed to lock collateral")
+		}
+
+		s.log.Info("cash locked",
+			logger.Str("participant_id", req.ParticipantId),
+			logger.Str("symbol", req.Symbol),
+			logger.Str("lock_id", lockID.String()),
+		)
+
+		return &pb.CheckAndLockResponse{Approved: true, LockId: lockID.String()}, nil
+	}
+
+	if req.Side == pb.OrderSide_ORDER_SIDE_SELL {
+		if err := s.checker.CheckSell(ctx, participantID, req.Symbol, req.Quantity); err != nil {
+			s.log.Info("risk check rejected",
+				logger.Str("participant_id", req.ParticipantId),
+				logger.Str("symbol", req.Symbol),
+				logger.Str("reason", err.Error()),
+			)
+			return &pb.CheckAndLockResponse{Approved: false, Reason: err.Error()}, nil
+		}
+
+		lockID, err := s.locker.LockShares(ctx, participantID, req.Symbol, req.Quantity)
+		if err != nil {
+			s.log.Error("failed to lock shares", err, logger.Str("participant_id", req.ParticipantId))
+			return nil, status.Error(codes.Internal, "failed to lock collateral")
+		}
+
+		s.log.Info("shares locked",
+			logger.Str("participant_id", req.ParticipantId),
+			logger.Str("symbol", req.Symbol),
+			logger.Str("lock_id", lockID.String()),
+		)
+
+		return &pb.CheckAndLockResponse{Approved: true, LockId: lockID.String()}, nil
+	}
+
+	return nil, status.Error(codes.InvalidArgument, "invalid order side")
 }
 
-func (s *Server) ReleaseLock(ctx context.Context, req *riskpb.ReleaseLockRequest) (*riskpb.ReleaseLockResponse, error) {
-	if req.LockId == "" {
-		return nil, status.Error(codes.InvalidArgument, "lock_id is required")
-	}
-
-	var err error
-	if req.FilledQuantity > 0 {
-		err = s.locks.Consume(ctx, req.LockId)
-	} else {
-		err = s.locks.Release(ctx, req.LockId)
-	}
-
+func (s *Server) ReleaseLock(ctx context.Context, req *pb.ReleaseLockRequest) (*pb.ReleaseLockResponse, error) {
+	lockID, err := uuid.Parse(req.LockId)
 	if err != nil {
-		s.log.Error().
-			Str("lock_id", req.LockId).
-			Int64("filled_quantity", req.FilledQuantity).
-			Err(err).
-			Msg("lock release failed")
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.InvalidArgument, "invalid lock_id")
 	}
 
-	s.log.Info().
-		Str("lock_id", req.LockId).
-		Int64("filled_quantity", req.FilledQuantity).
-		Msg("lock released")
+	if err := s.locker.Release(ctx, lockID, req.FilledQuantity); err != nil {
+		s.log.Error("failed to release lock", err, logger.Str("lock_id", req.LockId))
+		return &pb.ReleaseLockResponse{Released: false}, nil
+	}
 
-	return &riskpb.ReleaseLockResponse{Released: true}, nil
+	s.log.Info("lock released", logger.Str("lock_id", req.LockId))
+	return &pb.ReleaseLockResponse{Released: true}, nil
 }

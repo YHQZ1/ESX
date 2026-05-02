@@ -1,125 +1,64 @@
 package main
 
 import (
-	"context"
 	"database/sql"
-	"fmt"
 	"net"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
-	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
-	"github.com/rs/zerolog"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/reflection"
-	"google.golang.org/grpc/status"
-
-	riskpb "github.com/YHQZ1/esx/packages/proto/risk"
+	"github.com/YHQZ1/esx/packages/logger"
+	pb "github.com/YHQZ1/esx/packages/proto/risk"
 	"github.com/YHQZ1/esx/services/risk-engine/internal/checks"
 	"github.com/YHQZ1/esx/services/risk-engine/internal/db"
-	riskgrpc "github.com/YHQZ1/esx/services/risk-engine/internal/grpc"
+	grpcserver "github.com/YHQZ1/esx/services/risk-engine/internal/grpc"
 	"github.com/YHQZ1/esx/services/risk-engine/internal/locks"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
 	godotenv.Load()
 
-	log := zerolog.New(os.Stdout).With().
-		Timestamp().
-		Str("service", "risk-engine").
-		Logger()
+	log := logger.New("risk-engine")
 
-	level, err := zerolog.ParseLevel(os.Getenv("LOG_LEVEL"))
+	riskDB, err := sql.Open("postgres", os.Getenv("DATABASE_URL"))
 	if err != nil {
-		level = zerolog.InfoLevel
+		log.Fatal("failed to connect to risk database", err)
 	}
-	zerolog.SetGlobalLevel(level)
+	defer riskDB.Close()
 
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		log.Fatal().Msg("DATABASE_URL is required")
+	if err := riskDB.Ping(); err != nil {
+		log.Fatal("failed to ping risk database", err)
 	}
 
-	conn, err := sql.Open("postgres", dbURL)
+	participantDB, err := sql.Open("postgres", os.Getenv("PARTICIPANT_DB_URL"))
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to open database connection")
+		log.Fatal("failed to connect to participant database", err)
 	}
-	defer conn.Close()
+	defer participantDB.Close()
 
-	conn.SetMaxOpenConns(25)
-	conn.SetMaxIdleConns(10)
-	conn.SetConnMaxLifetime(5 * time.Minute)
-
-	if err := conn.Ping(); err != nil {
-		log.Fatal().Err(err).Msg("failed to ping database")
+	if err := participantDB.Ping(); err != nil {
+		log.Fatal("failed to ping participant database", err)
 	}
 
-	log.Info().Msg("connected to database")
+	queries := db.New(riskDB, participantDB)
+	checker := checks.New(queries)
+	locker := locks.New(queries)
+	srv := grpcserver.NewServer(checker, locker, log)
 
-	database := db.New(conn)
-	checker := checks.New(database)
-	lockManager := locks.New(database, checker)
-	server := riskgrpc.NewServer(lockManager, log)
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "9092"
-	}
-
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
+	lis, err := net.Listen("tcp", ":9093")
 	if err != nil {
-		log.Fatal().Err(err).Str("port", port).Msg("failed to listen")
+		log.Fatal("failed to listen", err)
 	}
 
-	grpcServer := grpc.NewServer(
-		grpc.UnaryInterceptor(unaryLoggingInterceptor(log)),
-	)
-	riskpb.RegisterRiskServiceServer(grpcServer, server)
-	reflection.Register(grpcServer)
+	s := grpc.NewServer()
+	pb.RegisterRiskServiceServer(s, srv)
+	reflection.Register(s)
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	log.Info("grpc server listening", logger.Str("addr", ":9092"))
 
-	go func() {
-		log.Info().Str("port", port).Msg("risk engine started")
-		if err := grpcServer.Serve(lis); err != nil {
-			log.Fatal().Err(err).Msg("grpc server failed")
-		}
-	}()
-
-	<-quit
-	log.Info().Msg("shutting down risk engine")
-	grpcServer.GracefulStop()
-}
-
-func unaryLoggingInterceptor(log zerolog.Logger) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		start := time.Now()
-		resp, err := handler(ctx, req)
-		duration := time.Since(start)
-
-		code := codes.OK
-		if err != nil {
-			if s, ok := status.FromError(err); ok {
-				code = s.Code()
-			}
-		}
-
-		event := log.Info()
-		if err != nil {
-			event = log.Warn()
-		}
-
-		event.
-			Str("method", info.FullMethod).
-			Str("code", code.String()).
-			Dur("duration_ms", duration).
-			Msg("grpc request")
-
-		return resp, err
+	if err := s.Serve(lis); err != nil {
+		log.Fatal("grpc server failed", err)
 	}
 }

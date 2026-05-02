@@ -2,88 +2,54 @@ package checks
 
 import (
 	"context"
-	"errors"
+	"database/sql"
 	"fmt"
 
 	"github.com/YHQZ1/esx/services/risk-engine/internal/db"
-)
-
-var (
-	ErrInsufficientCash   = errors.New("insufficient available cash balance")
-	ErrInsufficientShares = errors.New("insufficient available share position")
-	ErrAccountNotFound    = errors.New("account not found")
-	ErrInvalidPrice       = errors.New("price must be greater than zero")
-	ErrInvalidQuantity    = errors.New("quantity must be greater than zero")
+	"github.com/google/uuid"
 )
 
 type Checker struct {
-	db *db.DB
+	db db.Querier
 }
 
-func New(database *db.DB) *Checker {
+func New(database db.Querier) *Checker {
 	return &Checker{db: database}
 }
 
-type BuyCheckResult struct {
-	AvailableBalance int64
-	RequiredAmount   int64
-}
-
-type SellCheckResult struct {
-	AvailableShares int64
-	RequiredShares  int64
-}
-
-func (c *Checker) CheckBuy(ctx context.Context, participantID, symbol string, quantity, price int64) (*BuyCheckResult, error) {
-	if price <= 0 {
-		return nil, ErrInvalidPrice
-	}
-	if quantity <= 0 {
-		return nil, ErrInvalidQuantity
-	}
-
+func (c *Checker) CheckBuy(ctx context.Context, participantID uuid.UUID, price, quantity int64) error {
 	account, err := c.db.GetCashAccount(ctx, participantID)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return nil, ErrAccountNotFound
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("cash account not found")
 		}
-		return nil, fmt.Errorf("fetch cash account: %w", err)
+		return fmt.Errorf("failed to get cash account: %w", err)
 	}
 
 	required := price * quantity
 	available := account.Balance - account.Locked
 
 	if available < required {
-		return nil, fmt.Errorf("%w: available %d, required %d", ErrInsufficientCash, available, required)
+		return fmt.Errorf("insufficient funds: required %d, available %d", required, available)
 	}
 
-	return &BuyCheckResult{
-		AvailableBalance: available,
-		RequiredAmount:   required,
-	}, nil
+	return nil
 }
 
-func (c *Checker) CheckSell(ctx context.Context, participantID, symbol string, quantity int64) (*SellCheckResult, error) {
-	if quantity <= 0 {
-		return nil, ErrInvalidQuantity
-	}
-
+func (c *Checker) CheckSell(ctx context.Context, participantID uuid.UUID, symbol string, quantity int64) error {
 	account, err := c.db.GetSecuritiesAccount(ctx, participantID, symbol)
 	if err != nil {
-		if errors.Is(err, db.ErrNotFound) {
-			return nil, ErrAccountNotFound
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("securities account not found for symbol %s", symbol)
 		}
-		return nil, fmt.Errorf("fetch securities account: %w", err)
+		return fmt.Errorf("failed to get securities account: %w", err)
 	}
 
 	available := account.Quantity - account.Locked
 
 	if available < quantity {
-		return nil, fmt.Errorf("%w: available %d, required %d", ErrInsufficientShares, available, quantity)
+		return fmt.Errorf("insufficient shares: required %d, available %d", quantity, available)
 	}
 
-	return &SellCheckResult{
-		AvailableShares: available,
-		RequiredShares:  quantity,
-	}, nil
+	return nil
 }

@@ -1,59 +1,34 @@
 package db
 
 import (
-	"database/sql"
 	"time"
-)
 
-type LockStatus string
-
-const (
-	LockStatusActive   LockStatus = "active"
-	LockStatusReleased LockStatus = "released"
-	LockStatusConsumed LockStatus = "consumed"
+	"github.com/google/uuid"
 )
 
 type Lock struct {
-	ID            string
-	ParticipantID string
-	Symbol        string
-	Side          string
-	Quantity      int64
-	Price         int64
-	LockedAmount  int64
-	Status        LockStatus
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID            uuid.UUID `json:"id"`
+	ParticipantID uuid.UUID `json:"participant_id"`
+	Symbol        string    `json:"symbol"`
+	Side          string    `json:"side"`
+	Quantity      int64     `json:"quantity"`
+	Price         int64     `json:"price"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type CashAccount struct {
-	ID            string
-	ParticipantID string
+	ID            uuid.UUID
+	ParticipantID uuid.UUID
 	Balance       int64
 	Locked        int64
-	Currency      string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
 }
 
 type SecuritiesAccount struct {
-	ID            string
-	ParticipantID string
+	ID            uuid.UUID
+	ParticipantID uuid.UUID
 	Symbol        string
 	Quantity      int64
 	Locked        int64
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-}
-
-type DB struct {
-	conn *sql.DB
-}
-
-func New(conn *sql.DB) *DB {
-	return &DB{conn: conn}
-}
-
-func (d *DB) Conn() *sql.DB {
-	return d.conn
 }
