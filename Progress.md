@@ -1,6 +1,6 @@
 # ESX — Progress Tracker
 
-## Status: Phase 4 — Complete. Phase 5 — Up Next.
+## Status: Phase 4 — Complete. Phase 5 — Up Next
 
 ---
 
