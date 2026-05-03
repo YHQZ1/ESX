@@ -1,6 +1,6 @@
 # ESX — Progress Tracker
 
-## Status: Phase 1 — Complete. Phase 2 — Up Next.
+## Status: Phase 2 — Complete. Phase 3 — Up Next.
 
 ---
 
@@ -11,7 +11,7 @@
 - [x] `docker-compose.yml` — 7 containers on named `esx` network
   - Postgres 16 → `localhost:5433`
   - Redis 7 → `localhost:6379`
-  - Kafka KRaft (confluentinc/cp-kafka:7.6.0) → `kafka:9092` (internal), `localhost:9092` (host via /etc/hosts)
+  - Kafka KRaft (confluentinc/cp-kafka:7.6.0) → `localhost:9092`
   - Kafka UI → `localhost:9080`
   - Prometheus → `localhost:9090`
   - Grafana → `localhost:3001` (admin/admin)
@@ -35,78 +35,90 @@
 ### Shared Packages
 
 - [x] `packages/logger` — zerolog structured JSON logger
-  - `logger.New("service-name")` returns a logger
-  - Methods: Trace, Debug, Info, Warn, Error, Fatal
-  - Field helpers: Str, Int, Int64, Bool, Any
-  - Log level controlled via `LOG_LEVEL` env var
 - [x] `packages/kafka` — segmentio/kafka-go producer/consumer wrapper
-  - `NewProducer(brokers, topic, log)` → `Publish(ctx, key, payload)`
-  - `NewConsumer(brokers, topic, groupID, log)` → `RegisterHandler` + `Start(ctx)`
-  - `Decode[T](msg)` generic helper for unmarshalling messages
-  - All 9 topic constants defined in `topics.go`
 - [x] `packages/proto` — gRPC proto definitions + generated Go stubs
   - `participant.proto` → `ValidateAPIKey` RPC
   - `risk.proto` → `CheckAndLock`, `ReleaseLock` RPCs
   - `matching.proto` → `SubmitOrder`, `CancelOrder` RPCs
-  - Generated stubs at `packages/proto/participant/`, `risk/`, `matching/`
-  - `packages/proto/go.mod` exists with grpc + protobuf dependencies
 
 ### Services
 
 - [x] `services/participant-registry` — identity, API keys, accounts `:8081` + gRPC `:9091`
   - REST: `POST /participants/register`, `POST /participants/:id/deposit`, `GET /participants/:id`
-  - gRPC: `ValidateAPIKey` — hashes incoming key, looks up participant, returns participant_id + status
+  - gRPC: `ValidateAPIKey`
   - Schema: `participants`, `api_keys`, `cash_accounts`, `securities_accounts`
   - API keys: `crypto/rand` generated, SHA-256 hashed, raw key returned once only
-  - `.env` loaded via `godotenv`
   - All endpoints tested and working
 
 - [x] `services/risk-engine` — pre-trade collateral validation, locking gRPC `:9093`
-  - gRPC: `CheckAndLock` — validates and locks cash (BUY) or shares (SELL)
-  - gRPC: `ReleaseLock` — releases lock on cancel, partial release on partial fill
-  - Schema: `locks` table in `risk_engine` database
+  - gRPC: `CheckAndLock`, `ReleaseLock`
   - BUY: verifies `cash_accounts.balance - locked >= price * quantity`, locks cash
   - SELL: verifies `securities_accounts.quantity - locked >= quantity`, locks shares
-  - Reads directly from `participant_registry` database for balance checks
-  - gRPC reflection enabled for grpcurl testing
-  - All lock operations atomic — no partial state possible
-  - Tested: approved and rejected cases both verified
+  - Reads directly from `participant_registry` database
+  - All cases tested and verified
 
 - [x] `services/matching-engine` — order book, price-time priority matching gRPC `:9094`
   - gRPC: `SubmitOrder`, `CancelOrder`
   - Redis-backed order book per symbol using sorted sets
   - Price-time priority: best price first, FIFO within same price level
   - Handles full fills, partial fills, IOC orders
-  - Circuit breaker: halts symbol on 10% price move, emits `circuit.breaker.triggered`
+  - Circuit breaker: halts symbol on 10% price move
   - Emits `trade.executed` to Kafka on every match
-  - Schema: `orders` table in `matching_engine` database
-  - gRPC reflection enabled
-  - Full end-to-end trade tested and verified: sell order rested, buy order matched, status `filled`
+  - Full end-to-end trade tested and verified
+
+- [x] `services/clearing-house` — novation, trade guarantee `:8084`
+  - Consumes `trade.executed` from Kafka
+  - Verifies both buy and sell locks are active in risk_engine db
+  - Creates `cleared_trade` record as central counterparty
+  - Emits `trade.cleared` to Kafka
+  - All trades verified in cleared_trades table
+
+- [x] `services/settlement-engine` — atomic DvP settlement `:8086`
+  - Consumes `trade.cleared` from Kafka
+  - Atomic 4-way transaction: debit buyer cash, credit seller cash, debit seller shares, credit buyer shares
+  - Updates lock status to `consumed` in risk_engine db
+  - Emits `trade.settled` to Kafka
+  - Cash and shares verified moving correctly in participant_registry db
+
+- [x] `services/ledger-service` — double-entry bookkeeping `:8087`
+  - Consumes `trade.settled` from Kafka
+  - Writes 4 journal entries per trade (2 cash + 2 securities)
+  - REST: `GET /ledger/:id/balance`, `/positions`, `/cash-transactions`, `/securities-transactions`
+  - All endpoints tested and returning correct data
 
 ---
 
 ## Up Next
 
-### Clearing House `:8084`
+### Order Gateway `:8080`
 
-Pure Kafka consumer + producer service. Consumes `trade.executed`, steps in as central counterparty (novation), verifies locked collateral on both sides, emits `trade.cleared`.
+The public entry point for all market participants. Implements FIX Protocol 4.2 parser alongside a REST API. Authenticates participants via gRPC to Participant Registry, runs pre-trade risk checks via gRPC to Risk Engine, forwards validated orders to Matching Engine.
 
 Build order:
 
-1. `go.mod` — kafka, logger, lib/pq, godotenv, uuid
-2. Database schema — `cleared_trades` table
-3. `internal/db/models.go` + `internal/db/queries.go`
-4. `internal/novation/novation.go` — CCP logic, verifies both sides have active locks
-5. `internal/netting/netting.go` — multilateral netting engine (aggregates positions end of day)
-6. `internal/kafka/consumer.go` — consumes `trade.executed`, calls novation, publishes `trade.cleared`
-7. `cmd/server/main.go` — wire everything, Kafka consumer only, no REST, no gRPC
-8. `.env` — DATABASE_URL, KAFKA_BROKERS, LOG_LEVEL
+1. `go.mod` — Gin, grpc, godotenv, lib/pq, uuid
+2. `internal/fix/parser.go` — FIX 4.2 message parser (tag=value format)
+3. `internal/fix/types.go` — FIX message types and constants
+4. `internal/middleware/auth.go` — API key extraction and validation via gRPC to Participant Registry
+5. `internal/client/registry.go` — gRPC client for Participant Registry
+6. `internal/client/risk.go` — gRPC client for Risk Engine
+7. `internal/client/matching.go` — gRPC client for Matching Engine
+8. `internal/handlers/orders.go` — REST order submission handler
+9. `internal/handlers/fix.go` — FIX order submission handler
+10. `cmd/server/main.go` — wire everything, HTTP on `:8080`
+11. `.env` — DATABASE_URL, PORT, PARTICIPANT_REGISTRY_ADDR, RISK_ENGINE_ADDR, MATCHING_ENGINE_ADDR
 
 Key logic:
 
-- On every `trade.executed` event: verify buyer lock and seller lock both exist and are active in risk_engine db
-- Create a cleared_trade record with ESX Clearing House as central counterparty
-- Emit `trade.cleared` with all four IDs: buyer, seller, buy_lock_id, sell_lock_id
+- Every inbound order (REST or FIX) goes through the same pipeline:
+  1. Parse and validate format
+  2. Authenticate API key via gRPC to Participant Registry → get participant_id
+  3. Run risk check via gRPC to Risk Engine → get lock_id or rejection
+  4. Forward to Matching Engine via gRPC → get order_id and status
+  5. Return execution report to caller
+- FIX 4.2 message format: `8=FIX.4.2|9=<len>|35=<type>|...|10=<checksum>`
+- Support order types: MARKET, LIMIT, STOP
+- Support time in force: GTC, IOC
 
 ---
 
@@ -127,38 +139,39 @@ Key logic:
 
 ## Remaining Phases
 
-| Phase    | Focus                                                             | Status      |
-| -------- | ----------------------------------------------------------------- | ----------- |
-| Phase 1  | Participant Registry, Risk Engine, Matching Engine                | ✅ Complete |
-| Phase 2  | Clearing House, Settlement Engine, Ledger Service, full Kafka e2e | In Progress |
-| Phase 3  | Order Gateway — FIX Protocol 4.2 parser                           | Planned     |
-| Phase 4  | Market Data Feed — WebSocket streaming, circuit breakers          | Planned     |
-| Phase 5  | Integration tests, k6 load testing                                | Planned     |
-| Phase 6  | Dockerize all services, Kubernetes manifests, Helm charts         | Planned     |
-| Phase 7  | AWS with Terraform — EKS, RDS, MSK, ElastiCache                   | Planned     |
-| Phase 8  | CI/CD — GitHub Actions + ArgoCD                                   | Planned     |
-| Phase 9  | Observability — Prometheus, Grafana, OpenTelemetry, Jaeger        | Planned     |
-| Phase 10 | Frontend — Next.js + TradingView Lightweight Charts               | Planned     |
+| Phase    | Focus                                                      | Status      |
+| -------- | ---------------------------------------------------------- | ----------- |
+| Phase 1  | Participant Registry, Risk Engine, Matching Engine         | ✅ Complete |
+| Phase 2  | Clearing House, Settlement Engine, Ledger Service          | ✅ Complete |
+| Phase 3  | Order Gateway — FIX Protocol 4.2 parser                    | In Progress |
+| Phase 4  | Market Data Feed — WebSocket streaming, circuit breakers   | Planned     |
+| Phase 5  | Integration tests, k6 load testing                         | Planned     |
+| Phase 6  | Dockerize all services, Kubernetes manifests, Helm charts  | Planned     |
+| Phase 7  | AWS with Terraform — EKS, RDS, MSK, ElastiCache            | Planned     |
+| Phase 8  | CI/CD — GitHub Actions + ArgoCD                            | Planned     |
+| Phase 9  | Observability — Prometheus, Grafana, OpenTelemetry, Jaeger | Planned     |
+| Phase 10 | Frontend — Next.js + TradingView Lightweight Charts        | Planned     |
 
 ---
 
 ## Key Decisions Made
 
-| Decision                | Choice                                            | Reason                                                              |
-| ----------------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
-| Kafka mode              | KRaft (no Zookeeper)                              | Modern, no extra infra overhead                                     |
-| Kafka image             | confluentinc/cp-kafka:7.6.0                       | Bitnami tags were unavailable                                       |
-| Kafka client            | segmentio/kafka-go                                | Closest to KafkaJS, pure Go, no CGo                                 |
-| Kafka broker resolution | `127.0.0.1 kafka` in /etc/hosts                   | Single broker address works both inside Docker and on host          |
-| Log format              | JSON everywhere                                   | Standard for Prometheus, Grafana, log aggregators                   |
-| Observability           | Self-hosted Prometheus + Grafana + Jaeger         | Production signal, free, what real exchanges run                    |
-| Postgres port           | 5433 (host) → 5432 (container)                    | Avoid conflict with local Postgres                                  |
-| Docker network          | named `esx` bridge network                        | Clean service isolation                                             |
-| Amounts                 | Stored as integers in smallest unit (paise/cents) | Avoids floating point rounding bugs                                 |
-| .env loading            | godotenv in all services                          | Simple, no external config service needed in dev                    |
-| proto go.mod            | separate go.mod in packages/proto                 | Required for replace directives in service go.mod files             |
-| Risk engine DB access   | Direct connection to participant_registry DB      | Avoids gRPC round-trip on hot path, risk checks must be synchronous |
-| gRPC reflection         | Enabled on all gRPC services                      | Allows grpcurl testing without proto files                          |
+| Decision                | Choice                                                                                     | Reason                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Kafka mode              | KRaft (no Zookeeper)                                                                       | Modern, no extra infra overhead                                                 |
+| Kafka image             | confluentinc/cp-kafka:7.6.0                                                                | Bitnami tags were unavailable                                                   |
+| Kafka client            | segmentio/kafka-go                                                                         | Closest to KafkaJS, pure Go, no CGo                                             |
+| Kafka broker resolution | `127.0.0.1 kafka` in /etc/hosts + `KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092` | Host services use localhost:9092, Docker containers use kafka:9092 via Kafka UI |
+| Log format              | JSON everywhere                                                                            | Standard for Prometheus, Grafana, log aggregators                               |
+| Observability           | Self-hosted Prometheus + Grafana + Jaeger                                                  | Production signal, free, what real exchanges run                                |
+| Postgres port           | 5433 (host) → 5432 (container)                                                             | Avoid conflict with local Postgres                                              |
+| Docker network          | named `esx` bridge network                                                                 | Clean service isolation                                                         |
+| Amounts                 | Stored as integers in smallest unit (paise/cents)                                          | Avoids floating point rounding bugs                                             |
+| .env loading            | godotenv in all services                                                                   | Simple, no external config service needed in dev                                |
+| proto go.mod            | separate go.mod in packages/proto                                                          | Required for replace directives in service go.mod files                         |
+| Risk engine DB access   | Direct connection to participant_registry DB                                               | Avoids gRPC round-trip on hot path                                              |
+| Settlement DB access    | Direct connection to participant_registry + risk_engine DB                                 | Atomic DvP requires direct DB access                                            |
+| gRPC reflection         | Enabled on all gRPC services                                                               | Allows grpcurl testing without proto files                                      |
 
 ---
 
@@ -179,7 +192,7 @@ Key logic:
 
 ## Test Participants (local dev)
 
-| Name       | participant_id                       | Notes                        |
-| ---------- | ------------------------------------ | ---------------------------- |
-| Trader One | 86303d8d-4429-41de-9a03-66c72d3fe06e | buyer, 1000000 paise cash    |
-| Trader Two | 7864c733-a3ff-4d9e-a36c-1af290216c1d | seller, 1000 RELIANCE shares |
+| Name       | participant_id                       | Notes                      |
+| ---------- | ------------------------------------ | -------------------------- |
+| Trader One | 86303d8d-4429-41de-9a03-66c72d3fe06e | buyer, cash balance varies |
+| Trader Two | 7864c733-a3ff-4d9e-a36c-1af290216c1d | seller, RELIANCE shares    |
