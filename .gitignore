@@ -16,6 +16,7 @@ web/.next/
 web/out/
 web/.env
 web/.env.*
+web/package-lock.json
 !web/.env.example
 
 # Terraform
@@ -37,4 +38,3 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
-*.swo
