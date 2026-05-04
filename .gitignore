@@ -1,4 +1,40 @@
+# Environment
 .env
-*.env
+.env.*
+!.env.example
+
+# Go
 bin/
 vendor/
+*.exe
+*.test
+*.out
+
+# Node / Next.js
+web/node_modules/
+web/.next/
+web/out/
+web/.env
+web/.env.*
+!web/.env.example
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/.terraform.lock.hcl
+infra/terraform/terraform.tfvars
+
+# Build artifacts
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
