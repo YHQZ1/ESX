@@ -1,7 +1,7 @@
 .PHONY: dev down
 
 dev:
-	tmux new-session -d -s esx -n infra
+	tmux new-session -d -s esx -n infrastructure
 	tmux send-keys -t esx 'docker-compose up -d' Enter
 	sleep 5
 	tmux new-window -t esx -n participant-registry

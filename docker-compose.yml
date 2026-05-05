@@ -14,7 +14,7 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U esx" ]
       interval: 5s
@@ -92,7 +92,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./infra/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infrastructure/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -115,8 +115,8 @@ services:
       - "3001:3000"
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning
-      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./infrastructure/observability/grafana/provisioning:/etc/grafana/provisioning
+      - ./infrastructure/observability/grafana/dashboards:/var/lib/grafana/dashboards
 
   jaeger:
     image: jaegertracing/all-in-one:latest

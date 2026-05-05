@@ -1,9 +1,9 @@
 .git
 .gitignore
 *.md
-infra/k8s
-infra/terraform
-infra/k6
+infrastructure/k8s
+infrastructure/terraform
+infrastructure/k6
 services/*/db/migrations
 **/.env
 **/*.env.example
