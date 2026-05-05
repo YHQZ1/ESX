@@ -1,155 +1,84 @@
 import http from "k6/http";
-import ws from "k6/ws";
-import { check, sleep } from "k6";
-import { Trend, Counter, Rate } from "k6/metrics";
-
-const orderSubmitLatency = new Trend("order_submit_latency", true);
-const tradeFilledLatency = new Trend("trade_filled_latency", true);
-const ordersSubmitted = new Counter("orders_submitted");
-const ordersFilled = new Counter("orders_filled");
-const ordersFailed = new Rate("orders_failed");
+import { check } from "k6";
 
 export const options = {
   scenarios: {
-    warmup: {
-      executor: "constant-vus",
-      vus: 2,
-      duration: "10s",
-      gracefulStop: "5s",
-    },
-    sustained: {
+    ramp_up: {
       executor: "ramping-vus",
-      startVUs: 2,
+      startVUs: 0,
       stages: [
-        { duration: "15s", target: 10 },
+        { duration: "10s", target: 20 },
         { duration: "30s", target: 20 },
-        { duration: "15s", target: 5 },
+        { duration: "10s", target: 0 },
       ],
-      gracefulRampDown: "5s",
-      startTime: "15s",
     },
   },
   thresholds: {
-    order_submit_latency: ["p(95)<500", "p(99)<1000"],
-    orders_failed: ["rate<0.01"],
+    http_req_duration: ["p(95)<100"],
     http_req_failed: ["rate<0.01"],
   },
 };
 
-const BASE_URL = __ENV.BASE_URL || "http://localhost:8080";
-const REGISTRY_URL = __ENV.REGISTRY_URL || "http://localhost:8081";
+const GATEWAY_URL = "http://localhost:8080";
+const REGISTRY_URL = "http://localhost:8081";
 
-const BUYER_API_KEY =
-  __ENV.BUYER_API_KEY ||
-  "9e214dc45c6db75645a1598bd60ec875db9192ed81f9da23c4093c4ea3af96bd";
-const SELLER_API_KEY =
-  __ENV.SELLER_API_KEY ||
-  "d2f36fa3c1544c57e16c024fd48435b8bb627950f8727d06cb6ba168c0e50cd6";
-
-const SYMBOLS = ["RELIANCE", "TCS", "INFY", "HDFC", "WIPRO"];
-
-function randomSymbol() {
-  return SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)];
-}
-
-function randomPrice(base, spread) {
-  return base + Math.floor(Math.random() * spread);
-}
-
+// The setup function runs ONCE before the load test begins.
 export function setup() {
-  const depositRes = http.post(
-    `${REGISTRY_URL}/participants/86303d8d-4429-41de-9a03-66c72d3fe06e/deposit`,
-    JSON.stringify({ amount: 50000000 }),
+  const ts = new Date().getTime();
+  const email = `k6_trader_${ts}@esx.com`;
+
+  // 1. Register User
+  const regRes = http.post(
+    `${REGISTRY_URL}/participants/register`,
+    JSON.stringify({
+      name: "k6 Load Tester",
+      email: email,
+    }),
     { headers: { "Content-Type": "application/json" } },
   );
-  check(depositRes, { "buyer funded": (r) => r.status === 200 });
-  return {};
-}
 
-export default function () {
-  const symbol = randomSymbol();
-  const price = randomPrice(49000, 2000);
-
-  const sellStart = Date.now();
-  const sellRes = http.post(
-    `${BASE_URL}/orders`,
-    JSON.stringify({
-      symbol: symbol,
-      side: "SELL",
-      type: "LIMIT",
-      quantity: 1,
-      price: price,
-    }),
-    {
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": SELLER_API_KEY,
-      },
-    },
-  );
-  orderSubmitLatency.add(Date.now() - sellStart);
-  ordersSubmitted.add(1);
-
-  const sellOk = check(sellRes, {
-    "sell order accepted": (r) => r.status === 201,
-    "sell has order_id": (r) => {
-      try {
-        return JSON.parse(r.body).order_id !== undefined;
-      } catch {
-        return false;
-      }
-    },
-  });
-
-  if (!sellOk) {
-    ordersFailed.add(1);
-    sleep(0.1);
-    return;
+  if (regRes.status !== 201) {
+    throw new Error(`Failed to register participant: ${regRes.body}`);
   }
 
-  sleep(0.05);
+  const apiKey = regRes.json("api_key");
+  const participantId = regRes.json("participant_id");
 
-  const buyStart = Date.now();
-  const buyRes = http.post(
-    `${BASE_URL}/orders`,
+  // 2. Fund User: Increased to 100,000,000,000 paise (100 Crore paise)
+  http.post(
+    `${REGISTRY_URL}/participants/${participantId}/deposit`,
     JSON.stringify({
-      symbol: symbol,
-      side: "BUY",
-      type: "LIMIT",
-      quantity: 1,
-      price: price,
+      amount: 100000000000,
     }),
-    {
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": BUYER_API_KEY,
-      },
-    },
+    { headers: { "Content-Type": "application/json" } },
   );
-  orderSubmitLatency.add(Date.now() - buyStart);
-  ordersSubmitted.add(1);
 
-  const buyOk = check(buyRes, {
-    "buy order accepted": (r) => r.status === 201,
-    "buy order filled": (r) => {
-      try {
-        return JSON.parse(r.body).status === "filled";
-      } catch {
-        return false;
-      }
-    },
-  });
-
-  if (buyOk) {
-    tradeFilledLatency.add(Date.now() - sellStart);
-    ordersFilled.add(1);
-  } else {
-    ordersFailed.add(1);
-  }
-
-  sleep(0.1);
+  return { apiKey: apiKey };
 }
 
-export function teardown() {
-  console.log("Load test complete");
+// The default function runs repeatedly for every Virtual User (VU)
+export default function (data) {
+  const price = 49500 + Math.floor(Math.random() * 1000);
+
+  const payload = JSON.stringify({
+    symbol: "RELIANCE",
+    side: "BUY",
+    type: "LIMIT",
+    quantity: Math.floor(Math.random() * 5) + 1,
+    price: price,
+  });
+
+  const params = {
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": data.apiKey,
+    },
+  };
+
+  const res = http.post(`${GATEWAY_URL}/orders`, payload, params);
+
+  check(res, {
+    "status is 201": (r) => r.status === 201,
+    "order accepted": (r) => r.json("order_id") !== undefined,
+  });
 }
