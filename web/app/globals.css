@@ -1,0 +1,88 @@
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Geist+Mono:wght@500;600&display=swap");
+
+:root {
+  --bg: #ffffff;
+  --bg-deep: #f8fafc;
+  --navy: #002244;
+  --accent: #00a3e0;
+  --text: #0f172a;
+  --text-muted: #475569;
+  --text-subtle: #94a3b8;
+  --border: #e2e8f0;
+  --border-light: #f1f5f9;
+  --up: #16a34a;
+  --down: #dc2626;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: "Geist", sans-serif;
+  font-weight: 400;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+@keyframes ticker {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.fade-up {
+  animation: fadeUp 0.65s ease forwards;
+}
+.fade-up-1 {
+  animation: fadeUp 0.65s ease 0.1s forwards;
+  opacity: 0;
+}
+.fade-up-2 {
+  animation: fadeUp 0.65s ease 0.2s forwards;
+  opacity: 0;
+}
+.fade-up-3 {
+  animation: fadeUp 0.65s ease 0.3s forwards;
+  opacity: 0;
+}
+.fade-up-4 {
+  animation: fadeUp 0.65s ease 0.42s forwards;
+  opacity: 0;
+}
+.fade-up-5 {
+  animation: fadeUp 0.65s ease 0.54s forwards;
+  opacity: 0;
+}
