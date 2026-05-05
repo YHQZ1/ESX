@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/YHQZ1/esx/packages/kafka"
 	"github.com/YHQZ1/esx/packages/logger"
@@ -44,6 +45,14 @@ func main() {
 	if err := participantDB.Ping(); err != nil {
 		log.Fatal("failed to ping participant database", err)
 	}
+
+	ledgerDB.SetMaxOpenConns(50)
+	ledgerDB.SetMaxIdleConns(50)
+	ledgerDB.SetConnMaxLifetime(5 * time.Minute)
+
+	participantDB.SetMaxOpenConns(50)
+	participantDB.SetMaxIdleConns(50)
+	participantDB.SetConnMaxLifetime(5 * time.Minute)
 
 	brokers := strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 
