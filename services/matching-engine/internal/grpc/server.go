@@ -18,63 +18,57 @@ type Server struct {
 	queries db.Querier
 	engine  *matching.Engine
 	log     *logger.Logger
+	// --- ADD CHANNEL ---
+	orderChan chan db.Order
 }
 
 func NewServer(queries db.Querier, engine *matching.Engine, log *logger.Logger) *Server {
-	return &Server{queries: queries, engine: engine, log: log}
+	s := &Server{
+		queries:   queries,
+		engine:    engine,
+		log:       log,
+		orderChan: make(chan db.Order, 50000), // Buffer for 50k orders
+	}
+
+	// Start the single-threaded Matching Worker
+	go s.runMatcher()
+
+	return s
+}
+
+func (s *Server) runMatcher() {
+	for order := range s.orderChan {
+		// Process order in RAM without locks
+		s.engine.Submit(context.Background(), order)
+	}
 }
 
 func (s *Server) SubmitOrder(ctx context.Context, req *pb.SubmitOrderRequest) (*pb.SubmitOrderResponse, error) {
-	participantID, err := uuid.Parse(req.ParticipantId)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid participant_id")
-	}
+	participantID, _ := uuid.Parse(req.ParticipantId)
+	lockID, _ := uuid.Parse(req.LockId)
+	orderID := uuid.New()
 
-	lockID, err := uuid.Parse(req.LockId)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "invalid lock_id")
-	}
-
-	orderType := strings.TrimPrefix(req.Type.String(), "ORDER_TYPE_")
-	side := strings.TrimPrefix(req.Side.String(), "ORDER_SIDE_")
-	tif := strings.TrimPrefix(req.TimeInForce.String(), "TIME_IN_FORCE_")
-	if tif == "UNSPECIFIED" {
-		tif = "GTC"
-	}
-
-	order, err := s.queries.CreateOrder(ctx, db.CreateOrderParams{
+	order := db.Order{
+		ID:            orderID,
 		ParticipantID: participantID,
 		Symbol:        req.Symbol,
-		Side:          side,
-		Type:          orderType,
-		TimeInForce:   tif,
+		Side:          strings.TrimPrefix(req.Side.String(), "ORDER_SIDE_"),
+		Type:          strings.TrimPrefix(req.Type.String(), "ORDER_TYPE_"),
 		Quantity:      req.Quantity,
 		Price:         req.Price,
 		LockID:        lockID,
-	})
-	if err != nil {
-		s.log.Error("failed to create order", err)
-		return nil, status.Error(codes.Internal, "failed to create order")
 	}
 
-	orderStatus, err := s.engine.Submit(ctx, order)
-	if err != nil {
-		s.log.Error("matching failed", err, logger.Str("order_id", order.ID.String()))
-		return nil, status.Error(codes.Internal, "matching failed")
+	// Non-blocking: drop into pipeline and return instantly
+	select {
+	case s.orderChan <- order:
+		return &pb.SubmitOrderResponse{OrderId: orderID.String(), Status: "queued"}, nil
+	default:
+		return nil, status.Error(codes.ResourceExhausted, "buffer full")
 	}
-
-	s.log.Info("order submitted",
-		logger.Str("order_id", order.ID.String()),
-		logger.Str("symbol", req.Symbol),
-		logger.Str("side", side),
-		logger.Str("status", orderStatus),
-	)
-
-	return &pb.SubmitOrderResponse{
-		OrderId: order.ID.String(),
-		Status:  orderStatus,
-	}, nil
 }
+
+// ... keep CancelOrder as is
 
 func (s *Server) CancelOrder(ctx context.Context, req *pb.CancelOrderRequest) (*pb.CancelOrderResponse, error) {
 	orderID, err := uuid.Parse(req.OrderId)

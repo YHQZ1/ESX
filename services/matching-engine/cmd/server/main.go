@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/YHQZ1/esx/packages/kafka"
 	"github.com/YHQZ1/esx/packages/logger"
@@ -36,6 +37,10 @@ func main() {
 	if err := database.Ping(); err != nil {
 		log.Fatal("failed to ping database", err)
 	}
+
+	database.SetMaxOpenConns(1000)
+	database.SetMaxIdleConns(1000)
+	database.SetConnMaxLifetime(5 * time.Minute)
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: os.Getenv("REDIS_URL"),
