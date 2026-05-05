@@ -19,9 +19,10 @@ func NewProducer(brokers []string, topic string, log *logger.Logger) *Producer {
 		Addr:         kafka.TCP(brokers...),
 		Topic:        topic,
 		Balancer:     &kafka.LeastBytes{},
-		BatchTimeout: 10 * time.Millisecond,
+		BatchSize:    1000,
+		BatchTimeout: 5 * time.Millisecond,
 		RequiredAcks: kafka.RequireOne,
-		Async:        false,
+		Async:        true,
 	}
 
 	return &Producer{writer: w, log: log}
