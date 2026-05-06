@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/YHQZ1/esx/packages/kafka"
@@ -69,7 +70,15 @@ func (h *Handler) Handle(ctx context.Context, msg kafka.Message) error {
 		Quantity:    event.Quantity,
 	})
 	if err != nil {
-		h.log.Error("failed to clear trade", err, logger.Str("trade_id", event.TradeID.String()))
+		if strings.Contains(err.Error(), "duplicate") {
+			h.log.Info("skipping already cleared trade",
+				logger.Str("trade_id", event.TradeID.String()),
+			)
+			return nil // commit the offset, don't retry
+		}
+		h.log.Error("failed to clear trade", err,
+			logger.Str("trade_id", event.TradeID.String()),
+		)
 		return err
 	}
 

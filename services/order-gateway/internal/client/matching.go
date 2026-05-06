@@ -20,7 +20,7 @@ func NewMatchingClient(addr string) (*MatchingClient, error) {
 	return &MatchingClient{client: pb.NewMatchingServiceClient(conn)}, nil
 }
 
-func (c *MatchingClient) SubmitOrder(ctx context.Context, participantID, symbol, lockID string, side pb.OrderSide, orderType pb.OrderType, tif pb.TimeInForce, quantity, price int64) (string, string, error) {
+func (c *MatchingClient) SubmitOrder(ctx context.Context, participantID, symbol, lockID string, side pb.OrderSide, orderType pb.OrderType, tif pb.TimeInForce, quantity, price int64) (string, pb.OrderStatus, error) {
 	resp, err := c.client.SubmitOrder(ctx, &pb.SubmitOrderRequest{
 		ParticipantId: participantID,
 		Symbol:        symbol,
@@ -32,15 +32,16 @@ func (c *MatchingClient) SubmitOrder(ctx context.Context, participantID, symbol,
 		LockId:        lockID,
 	})
 	if err != nil {
-		return "", "", err
+		return "", pb.OrderStatus_ORDER_STATUS_UNSPECIFIED, err
 	}
 	return resp.OrderId, resp.Status, nil
 }
 
-func (c *MatchingClient) CancelOrder(ctx context.Context, orderID, participantID string) (bool, string, error) {
+func (c *MatchingClient) CancelOrder(ctx context.Context, orderID, participantID, lockID string) (bool, string, error) {
 	resp, err := c.client.CancelOrder(ctx, &pb.CancelOrderRequest{
 		OrderId:       orderID,
 		ParticipantId: participantID,
+		LockId:        lockID,
 	})
 	if err != nil {
 		return false, "", err

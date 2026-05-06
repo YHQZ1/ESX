@@ -10,6 +10,7 @@ import (
 type Querier interface {
 	CreateClearedTrade(ctx context.Context, arg CreateClearedTradeParams) (ClearedTrade, error)
 	GetLock(ctx context.Context, id uuid.UUID) (Lock, error)
+	UpdateLockStatus(ctx context.Context, id uuid.UUID, status string) error
 }
 
 type CreateClearedTradeParams struct {
@@ -54,4 +55,12 @@ func (q *Queries) GetLock(ctx context.Context, id uuid.UUID) (Lock, error) {
 		id,
 	).Scan(&l.ID, &l.ParticipantID, &l.Symbol, &l.Side, &l.Quantity, &l.Price, &l.Status)
 	return l, err
+}
+
+func (q *Queries) UpdateLockStatus(ctx context.Context, id uuid.UUID, status string) error {
+	_, err := q.riskDB.ExecContext(ctx,
+		`UPDATE locks SET status = $2, updated_at = now() WHERE id = $1`,
+		id, status,
+	)
+	return err
 }

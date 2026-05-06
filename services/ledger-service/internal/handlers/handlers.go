@@ -11,11 +11,11 @@ import (
 )
 
 type Handler struct {
-	db  *db.Queries
+	db  db.Querier
 	log *logger.Logger
 }
 
-func New(database *db.Queries, log *logger.Logger) *Handler {
+func New(database db.Querier, log *logger.Logger) *Handler {
 	return &Handler{db: database, log: log}
 }
 

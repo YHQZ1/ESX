@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 
 	"github.com/YHQZ1/esx/packages/logger"
 	pb "github.com/YHQZ1/esx/packages/proto/participant"
@@ -28,8 +29,17 @@ func main() {
 	}
 	defer database.Close()
 
-	if err := database.Ping(); err != nil {
-		log.Fatal("failed to ping database", err)
+	for i := range 5 {
+		if err := database.Ping(); err == nil {
+			break
+		} else if i == 4 {
+			log.Fatal("failed to ping database after retries", err)
+		} else {
+			log.Warn("database not ready, retrying",
+				logger.Int("attempt", i+1),
+			)
+			time.Sleep(2 * time.Second)
+		}
 	}
 
 	queries := db.New(database)

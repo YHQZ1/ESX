@@ -9,6 +9,7 @@ import (
 
 type Querier interface {
 	CreateSettlement(ctx context.Context, arg CreateSettlementParams) (Settlement, error)
+	Settle(ctx context.Context, arg CreateSettlementParams) (Settlement, error)
 }
 
 type CreateSettlementParams struct {
@@ -28,14 +29,12 @@ type CreateSettlementParams struct {
 type Queries struct {
 	settlementDB  *sql.DB
 	participantDB *sql.DB
-	riskDB        *sql.DB
 }
 
-func New(settlementDB, participantDB, riskDB *sql.DB) *Queries {
+func New(settlementDB, participantDB *sql.DB) *Queries {
 	return &Queries{
 		settlementDB:  settlementDB,
 		participantDB: participantDB,
-		riskDB:        riskDB,
 	}
 }
 
@@ -93,13 +92,6 @@ func (q *Queries) Settle(ctx context.Context, arg CreateSettlementParams) (Settl
 	}
 
 	if err := tx.Commit(); err != nil {
-		return Settlement{}, err
-	}
-
-	if _, err := q.riskDB.ExecContext(ctx,
-		`UPDATE locks SET status = 'consumed', updated_at = now() WHERE id IN ($1, $2)`,
-		arg.BuyLockID, arg.SellLockID,
-	); err != nil {
 		return Settlement{}, err
 	}
 

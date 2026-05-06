@@ -68,6 +68,7 @@ func (h *Hub) Run() {
 			if err != nil {
 				continue
 			}
+			var dead []*Client
 			h.mu.RLock()
 			for client := range h.clients {
 				client.mu.Lock()
@@ -78,11 +79,19 @@ func (h *Hub) Run() {
 					case client.send <- payload:
 					default:
 						close(client.send)
-						delete(h.clients, client)
+						dead = append(dead, client)
 					}
 				}
 			}
 			h.mu.RUnlock()
+
+			if len(dead) > 0 {
+				h.mu.Lock()
+				for _, client := range dead {
+					delete(h.clients, client)
+				}
+				h.mu.Unlock()
+			}
 		}
 	}
 }

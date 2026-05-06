@@ -10,11 +10,11 @@ import (
 )
 
 type Journal struct {
-	db  *db.Queries
+	db  db.Querier
 	log *logger.Logger
 }
 
-func New(database *db.Queries, log *logger.Logger) *Journal {
+func New(database db.Querier, log *logger.Logger) *Journal {
 	return &Journal{db: database, log: log}
 }
 
@@ -34,7 +34,7 @@ func (j *Journal) Record(ctx context.Context, arg RecordParams) error {
 	if _, err := j.db.CreateCashEntry(ctx, db.CreateCashEntryParams{
 		TradeID:       arg.TradeID,
 		ParticipantID: arg.BuyerID,
-		EntryType:     "DEBIT",
+		EntryType:     "debit",
 		Amount:        totalCash,
 		BalanceAfter:  buyerCashAfter,
 	}); err != nil {
@@ -44,7 +44,7 @@ func (j *Journal) Record(ctx context.Context, arg RecordParams) error {
 	if _, err := j.db.CreateCashEntry(ctx, db.CreateCashEntryParams{
 		TradeID:       arg.TradeID,
 		ParticipantID: arg.SellerID,
-		EntryType:     "CREDIT",
+		EntryType:     "credit",
 		Amount:        totalCash,
 		BalanceAfter:  sellerCashAfter,
 	}); err != nil {
@@ -67,7 +67,7 @@ func (j *Journal) Record(ctx context.Context, arg RecordParams) error {
 		TradeID:       arg.TradeID,
 		ParticipantID: arg.SellerID,
 		Symbol:        arg.Symbol,
-		EntryType:     "DEBIT",
+		EntryType:     "debit",
 		Quantity:      arg.Quantity,
 		BalanceAfter:  sellerSharesAfter,
 	}); err != nil {
@@ -78,7 +78,7 @@ func (j *Journal) Record(ctx context.Context, arg RecordParams) error {
 		TradeID:       arg.TradeID,
 		ParticipantID: arg.BuyerID,
 		Symbol:        arg.Symbol,
-		EntryType:     "CREDIT",
+		EntryType:     "credit",
 		Quantity:      arg.Quantity,
 		BalanceAfter:  buyerSharesAfter,
 	}); err != nil {

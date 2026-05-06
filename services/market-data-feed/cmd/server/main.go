@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/YHQZ1/esx/packages/kafka"
 	"github.com/YHQZ1/esx/packages/logger"
@@ -22,7 +23,7 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		return true // restrict in production
 	},
 }
 
@@ -39,6 +40,7 @@ func main() {
 
 	tradeConsumer := kafka.NewConsumer(brokers, kafka.TopicTradeExecuted, "market-data-feed", log)
 	tradeConsumer.RegisterHandler(h.HandleTradeExecuted)
+	defer tradeConsumer.Close()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -58,7 +60,6 @@ func main() {
 			log.Error("websocket upgrade failed", err)
 			return
 		}
-
 		client := hub.Register(conn)
 		go client.WritePump(hub)
 		client.ReadPump(hub)
@@ -73,9 +74,30 @@ func main() {
 		port = "8085"
 	}
 
-	log.Info("market data feed started", logger.Str("port", port))
-
-	if err := r.Run(fmt.Sprintf(":%s", port)); err != nil {
-		log.Fatal("http server failed", err)
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%s", port),
+		Handler:      r,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
+
+	go func() {
+		log.Info("market data feed started", logger.Str("port", port))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("http server failed", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Info("shutting down market data feed")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Fatal("server forced to shutdown", err)
+	}
+
+	log.Info("market data feed stopped")
 }

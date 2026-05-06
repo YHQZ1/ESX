@@ -30,6 +30,10 @@ type SubmitOrderRequest struct {
 	Price       int64  `json:"price"`
 }
 
+type CancelOrderRequest struct {
+	LockID string `json:"lock_id" binding:"required"`
+}
+
 func (h *OrderHandler) SubmitOrder(c *gin.Context) {
 	participantID := c.GetString("participant_id")
 
@@ -76,16 +80,18 @@ func (h *OrderHandler) SubmitOrder(c *gin.Context) {
 		return
 	}
 
+	statusStr := strings.TrimPrefix(status.String(), "ORDER_STATUS_")
+
 	h.log.Info("order submitted",
 		logger.Str("participant_id", participantID),
 		logger.Str("order_id", orderID),
 		logger.Str("symbol", req.Symbol),
-		logger.Str("status", status),
+		logger.Str("status", statusStr),
 	)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"order_id": orderID,
-		"status":   status,
+		"status":   statusStr,
 		"symbol":   req.Symbol,
 		"side":     req.Side,
 		"quantity": req.Quantity,
@@ -97,7 +103,13 @@ func (h *OrderHandler) CancelOrder(c *gin.Context) {
 	participantID := c.GetString("participant_id")
 	orderID := c.Param("id")
 
-	cancelled, reason, err := h.matching.CancelOrder(c.Request.Context(), orderID, participantID)
+	var req CancelOrderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "lock_id is required"})
+		return
+	}
+
+	cancelled, reason, err := h.matching.CancelOrder(c.Request.Context(), orderID, participantID, req.LockID)
 	if err != nil {
 		h.log.Error("cancel order failed", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "cancel failed"})

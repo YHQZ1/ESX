@@ -123,10 +123,12 @@ func (h *FIXHandler) Handle(c *gin.Context) {
 		return
 	}
 
+	statusStr := strings.TrimPrefix(status.String(), "ORDER_STATUS_")
+
 	fixSideStr := fix.SideBuy
-	if strings.ToUpper(fixSide) == fix.SideSell {
+	if fixSide == fix.SideSell {
 		fixSideStr = fix.SideSell
 	}
 
-	c.String(http.StatusOK, fix.NewOrderToFIX(orderID, symbol, fixSideStr, status, clOrdID))
+	c.String(http.StatusOK, fix.NewOrderToFIX(orderID, symbol, fixSideStr, statusStr, clOrdID))
 }

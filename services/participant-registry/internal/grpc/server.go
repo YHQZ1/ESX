@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"database/sql"
+	"sync"
 
 	"github.com/YHQZ1/esx/packages/logger"
 	pb "github.com/YHQZ1/esx/packages/proto/participant"
@@ -14,8 +15,9 @@ import (
 
 type Server struct {
 	pb.UnimplementedParticipantServiceServer
-	db  db.Querier
-	log *logger.Logger
+	db    db.Querier
+	log   *logger.Logger
+	cache sync.Map
 }
 
 func NewServer(database db.Querier, log *logger.Logger) *Server {
@@ -28,6 +30,10 @@ func (s *Server) ValidateAPIKey(ctx context.Context, req *pb.ValidateAPIKeyReque
 	}
 
 	keyHash := lib.HashAPIKey(req.ApiKey)
+
+	if val, ok := s.cache.Load(keyHash); ok {
+		return val.(*pb.ValidateAPIKeyResponse), nil
+	}
 
 	apiKey, err := s.db.GetAPIKeyByHash(ctx, keyHash)
 	if err != nil {
@@ -44,9 +50,13 @@ func (s *Server) ValidateAPIKey(ctx context.Context, req *pb.ValidateAPIKeyReque
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
-	return &pb.ValidateAPIKeyResponse{
+	resp := &pb.ValidateAPIKeyResponse{
 		ParticipantId: participant.ID.String(),
 		Name:          participant.Name,
 		IsActive:      participant.Status == "active",
-	}, nil
+	}
+
+	s.cache.Store(keyHash, resp)
+
+	return resp, nil
 }

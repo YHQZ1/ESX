@@ -3,6 +3,7 @@ package settlement
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/YHQZ1/esx/packages/logger"
 	"github.com/YHQZ1/esx/services/settlement-engine/internal/db"
@@ -10,11 +11,11 @@ import (
 )
 
 type Settler struct {
-	db  *db.Queries
+	db  db.Querier
 	log *logger.Logger
 }
 
-func New(database *db.Queries, log *logger.Logger) *Settler {
+func New(database db.Querier, log *logger.Logger) *Settler {
 	return &Settler{db: database, log: log}
 }
 
@@ -33,6 +34,12 @@ func (s *Settler) Settle(ctx context.Context, arg SettleParams) (db.Settlement, 
 		Quantity:    arg.Quantity,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			s.log.Info("trade already settled, skipping duplicate",
+				logger.Str("trade_id", arg.TradeID.String()),
+			)
+			return db.Settlement{}, fmt.Errorf("duplicate: %w", err)
+		}
 		return db.Settlement{}, fmt.Errorf("settlement failed: %w", err)
 	}
 

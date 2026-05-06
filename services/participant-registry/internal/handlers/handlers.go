@@ -30,31 +30,33 @@ func (h *Handler) Register(c *gin.Context) {
 		return
 	}
 
-	participant, err := h.db.CreateParticipant(c.Request.Context(), req.Name, req.Email)
-	if err != nil {
-		h.log.Error("failed to create participant", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create participant"})
-		return
-	}
+	var participant db.Participant
+	var rawKey string
 
-	_, err = h.db.CreateCashAccount(c.Request.Context(), participant.ID)
-	if err != nil {
-		h.log.Error("failed to create cash account", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create cash account"})
-		return
-	}
+	err := h.db.WithTx(c.Request.Context(), func(q db.Querier) error {
+		var err error
 
-	rawKey, err := lib.GenerateAPIKey()
-	if err != nil {
-		h.log.Error("failed to generate api key", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate api key"})
-		return
-	}
+		participant, err = q.CreateParticipant(c.Request.Context(), req.Name, req.Email)
+		if err != nil {
+			return err
+		}
 
-	_, err = h.db.CreateAPIKey(c.Request.Context(), participant.ID, lib.HashAPIKey(rawKey))
+		_, err = q.CreateCashAccount(c.Request.Context(), participant.ID)
+		if err != nil {
+			return err
+		}
+
+		rawKey, err = lib.GenerateAPIKey()
+		if err != nil {
+			return err
+		}
+
+		_, err = q.CreateAPIKey(c.Request.Context(), participant.ID, lib.HashAPIKey(rawKey))
+		return err
+	})
 	if err != nil {
-		h.log.Error("failed to create api key", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create api key"})
+		h.log.Error("failed to register participant", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register participant"})
 		return
 	}
 

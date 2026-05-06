@@ -3,6 +3,7 @@ package novation
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/YHQZ1/esx/packages/logger"
 	"github.com/YHQZ1/esx/services/clearing-house/internal/db"
@@ -48,7 +49,25 @@ func (n *Novator) Clear(ctx context.Context, arg ClearParams) (db.ClearedTrade, 
 		Quantity:    arg.Quantity,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			n.log.Info("trade already cleared, skipping duplicate",
+				logger.Str("trade_id", arg.TradeID.String()),
+			)
+			return db.ClearedTrade{}, fmt.Errorf("duplicate: %w", err)
+		}
 		return db.ClearedTrade{}, fmt.Errorf("failed to create cleared trade: %w", err)
+	}
+
+	if err := n.db.UpdateLockStatus(ctx, arg.BuyLockID, "consumed"); err != nil {
+		n.log.Error("failed to mark buy lock consumed", err,
+			logger.Str("lock_id", arg.BuyLockID.String()),
+		)
+	}
+
+	if err := n.db.UpdateLockStatus(ctx, arg.SellLockID, "consumed"); err != nil {
+		n.log.Error("failed to mark sell lock consumed", err,
+			logger.Str("lock_id", arg.SellLockID.String()),
+		)
 	}
 
 	n.log.Info("trade cleared",
@@ -57,7 +76,6 @@ func (n *Novator) Clear(ctx context.Context, arg ClearParams) (db.ClearedTrade, 
 		logger.Int64("price", arg.Price),
 		logger.Int64("quantity", arg.Quantity),
 	)
-
 	return cleared, nil
 }
 

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/google/uuid"
 )
@@ -17,10 +18,17 @@ type Querier interface {
 	Deposit(ctx context.Context, participantID uuid.UUID, amount int64) (CashAccount, error)
 	GetSecuritiesAccount(ctx context.Context, participantID uuid.UUID, symbol string) (SecuritiesAccount, error)
 	GetAllSecuritiesAccounts(ctx context.Context, participantID uuid.UUID) ([]SecuritiesAccount, error)
+	WithTx(ctx context.Context, fn func(q Querier) error) error
+}
+
+type DBTX interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 type Queries struct {
-	db *sql.DB
+	db DBTX
 }
 
 func New(db *sql.DB) *Queries {
@@ -118,4 +126,20 @@ func (q *Queries) GetAllSecuritiesAccounts(ctx context.Context, participantID uu
 		accounts = append(accounts, a)
 	}
 	return accounts, rows.Err()
+}
+
+func (q *Queries) WithTx(ctx context.Context, fn func(q Querier) error) error {
+	sqlDB, ok := q.db.(*sql.DB)
+	if !ok {
+		return fmt.Errorf("WithTx called on non-DB connection")
+	}
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(&Queries{db: tx}); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }

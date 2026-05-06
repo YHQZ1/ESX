@@ -12,6 +12,8 @@ type Querier interface {
 	CreateSecuritiesEntry(ctx context.Context, arg CreateSecuritiesEntryParams) (SecuritiesEntry, error)
 	GetCashEntries(ctx context.Context, participantID uuid.UUID, limit, offset int64) ([]CashEntry, error)
 	GetSecuritiesEntries(ctx context.Context, participantID uuid.UUID, limit, offset int64) ([]SecuritiesEntry, error)
+	GetCashBalance(ctx context.Context, participantID uuid.UUID) (int64, error)
+	GetSecuritiesPositions(ctx context.Context, participantID uuid.UUID) (map[string]int64, error)
 }
 
 type CreateCashEntryParams struct {

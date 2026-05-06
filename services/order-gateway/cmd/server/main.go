@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/YHQZ1/esx/packages/logger"
@@ -19,7 +22,6 @@ func main() {
 
 	log := logger.New("order-gateway")
 
-	// Initialize gRPC clients with high-performance connection settings
 	registryClient, err := client.NewRegistryClient(os.Getenv("PARTICIPANT_REGISTRY_ADDR"))
 	if err != nil {
 		log.Fatal("failed to connect to participant registry", err)
@@ -38,7 +40,6 @@ func main() {
 	orderHandler := handlers.NewOrderHandler(riskClient, matchingClient, log)
 	fixHandler := handlers.NewFIXHandler(registryClient, riskClient, matchingClient, log)
 
-	// Set Gin to release mode for maximum performance metrics
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
@@ -58,20 +59,34 @@ func main() {
 		port = "8080"
 	}
 
-	// ENTERPRISE HTTP SERVER TUNING
-	// Standard r.Run() is too slow for 10k RPS. We use a custom http.Server.
 	srv := &http.Server{
 		Addr:           fmt.Sprintf(":%s", port),
 		Handler:        r,
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   10 * time.Second,
 		IdleTimeout:    120 * time.Second,
-		MaxHeaderBytes: 1 << 20, // 1MB
+		MaxHeaderBytes: 1 << 20,
 	}
 
-	log.Info("order gateway started with high-concurrency tuning", logger.Str("port", port))
+	go func() {
+		log.Info("order gateway started", logger.Str("port", port))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("http server failed", err)
+		}
+	}()
 
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal("http server failed", err)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Info("shutting down order gateway")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal("server forced to shutdown", err)
 	}
+
+	log.Info("order gateway stopped")
 }

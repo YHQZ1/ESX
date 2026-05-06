@@ -32,8 +32,17 @@ func main() {
 	}
 	defer ledgerDB.Close()
 
-	if err := ledgerDB.Ping(); err != nil {
-		log.Fatal("failed to ping ledger database", err)
+	for i := range 5 {
+		if err := ledgerDB.Ping(); err == nil {
+			break
+		} else if i == 4 {
+			log.Fatal("failed to ping ledger database after retries", err)
+		} else {
+			log.Warn("ledger database not ready, retrying",
+				logger.Int("attempt", i+1),
+			)
+			time.Sleep(2 * time.Second)
+		}
 	}
 
 	participantDB, err := sql.Open("postgres", os.Getenv("PARTICIPANT_DB_URL"))
@@ -42,8 +51,17 @@ func main() {
 	}
 	defer participantDB.Close()
 
-	if err := participantDB.Ping(); err != nil {
-		log.Fatal("failed to ping participant database", err)
+	for i := range 5 {
+		if err := participantDB.Ping(); err == nil {
+			break
+		} else if i == 4 {
+			log.Fatal("failed to ping participant database after retries", err)
+		} else {
+			log.Warn("participant database not ready, retrying",
+				logger.Int("attempt", i+1),
+			)
+			time.Sleep(2 * time.Second)
+		}
 	}
 
 	ledgerDB.SetMaxOpenConns(50)
@@ -62,6 +80,7 @@ func main() {
 
 	c := kafka.NewConsumer(brokers, kafka.TopicTradeSettled, "ledger-service", log)
 	c.RegisterHandler(h.Handle)
+	defer c.Close()
 
 	go func() {
 		ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

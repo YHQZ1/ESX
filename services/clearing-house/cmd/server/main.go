@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/YHQZ1/esx/packages/kafka"
 	"github.com/YHQZ1/esx/packages/logger"
@@ -28,14 +29,34 @@ func main() {
 	}
 	defer clearingDB.Close()
 
-	if err := clearingDB.Ping(); err != nil {
-		log.Fatal("failed to ping clearing database", err)
+	for i := range 5 {
+		if err := clearingDB.Ping(); err == nil {
+			break
+		} else if i == 4 {
+			log.Fatal("failed to ping clearing database after retries", err)
+		} else {
+			log.Warn("clearing database not ready, retrying",
+				logger.Int("attempt", i+1),
+			)
+			time.Sleep(2 * time.Second)
+		}
 	}
 
 	riskDB, err := sql.Open("postgres", os.Getenv("RISK_DB_URL"))
-	if err != nil {
-		log.Fatal("failed to connect to risk database", err)
+
+	for i := range 5 {
+		if err := riskDB.Ping(); err == nil {
+			break
+		} else if i == 4 {
+			log.Fatal("failed to ping risk database after retries", err)
+		} else {
+			log.Warn("risk database not ready, retrying",
+				logger.Int("attempt", i+1),
+			)
+			time.Sleep(2 * time.Second)
+		}
 	}
+
 	defer riskDB.Close()
 
 	if err := riskDB.Ping(); err != nil {
