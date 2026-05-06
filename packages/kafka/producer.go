@@ -21,7 +21,7 @@ func NewProducer(brokers []string, topic string, log *logger.Logger) *Producer {
 		Balancer:     &kafka.LeastBytes{},
 		BatchSize:    1000,
 		BatchTimeout: 5 * time.Millisecond,
-		RequiredAcks: kafka.RequireOne,
+		RequiredAcks: kafka.RequireAll,
 		Async:        true,
 	}
 

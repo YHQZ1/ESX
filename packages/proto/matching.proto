@@ -28,6 +28,14 @@ enum TimeInForce {
   TIME_IN_FORCE_IOC         = 2;
 }
 
+enum OrderStatus {
+  ORDER_STATUS_UNSPECIFIED = 0;
+  ORDER_STATUS_ACCEPTED    = 1;
+  ORDER_STATUS_REJECTED    = 2;
+  ORDER_STATUS_FILLED      = 3;
+  ORDER_STATUS_PARTIAL     = 4;
+}
+
 message SubmitOrderRequest {
   string      participant_id = 1;
   string      symbol         = 2;
@@ -40,13 +48,14 @@ message SubmitOrderRequest {
 }
 
 message SubmitOrderResponse {
-  string order_id = 1;
-  string status   = 2;
+  string      order_id = 1;
+  OrderStatus status   = 2;
 }
 
 message CancelOrderRequest {
   string order_id       = 1;
   string participant_id = 2;
+  string lock_id        = 3;
 }
 
 message CancelOrderResponse {

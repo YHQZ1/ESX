@@ -171,6 +171,61 @@ func (TimeInForce) EnumDescriptor() ([]byte, []int) {
 	return file_packages_proto_matching_proto_rawDescGZIP(), []int{2}
 }
 
+type OrderStatus int32
+
+const (
+	OrderStatus_ORDER_STATUS_UNSPECIFIED OrderStatus = 0
+	OrderStatus_ORDER_STATUS_ACCEPTED    OrderStatus = 1
+	OrderStatus_ORDER_STATUS_REJECTED    OrderStatus = 2
+	OrderStatus_ORDER_STATUS_FILLED      OrderStatus = 3
+	OrderStatus_ORDER_STATUS_PARTIAL     OrderStatus = 4
+)
+
+// Enum value maps for OrderStatus.
+var (
+	OrderStatus_name = map[int32]string{
+		0: "ORDER_STATUS_UNSPECIFIED",
+		1: "ORDER_STATUS_ACCEPTED",
+		2: "ORDER_STATUS_REJECTED",
+		3: "ORDER_STATUS_FILLED",
+		4: "ORDER_STATUS_PARTIAL",
+	}
+	OrderStatus_value = map[string]int32{
+		"ORDER_STATUS_UNSPECIFIED": 0,
+		"ORDER_STATUS_ACCEPTED":    1,
+		"ORDER_STATUS_REJECTED":    2,
+		"ORDER_STATUS_FILLED":      3,
+		"ORDER_STATUS_PARTIAL":     4,
+	}
+)
+
+func (x OrderStatus) Enum() *OrderStatus {
+	p := new(OrderStatus)
+	*p = x
+	return p
+}
+
+func (x OrderStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (OrderStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_packages_proto_matching_proto_enumTypes[3].Descriptor()
+}
+
+func (OrderStatus) Type() protoreflect.EnumType {
+	return &file_packages_proto_matching_proto_enumTypes[3]
+}
+
+func (x OrderStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use OrderStatus.Descriptor instead.
+func (OrderStatus) EnumDescriptor() ([]byte, []int) {
+	return file_packages_proto_matching_proto_rawDescGZIP(), []int{3}
+}
+
 type SubmitOrderRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ParticipantId string                 `protobuf:"bytes,1,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
@@ -274,7 +329,7 @@ func (x *SubmitOrderRequest) GetLockId() string {
 type SubmitOrderResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
-	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Status        OrderStatus            `protobuf:"varint,2,opt,name=status,proto3,enum=matching.OrderStatus" json:"status,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -316,17 +371,18 @@ func (x *SubmitOrderResponse) GetOrderId() string {
 	return ""
 }
 
-func (x *SubmitOrderResponse) GetStatus() string {
+func (x *SubmitOrderResponse) GetStatus() OrderStatus {
 	if x != nil {
 		return x.Status
 	}
-	return ""
+	return OrderStatus_ORDER_STATUS_UNSPECIFIED
 }
 
 type CancelOrderRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	OrderId       string                 `protobuf:"bytes,1,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
 	ParticipantId string                 `protobuf:"bytes,2,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
+	LockId        string                 `protobuf:"bytes,3,opt,name=lock_id,json=lockId,proto3" json:"lock_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -371,6 +427,13 @@ func (x *CancelOrderRequest) GetOrderId() string {
 func (x *CancelOrderRequest) GetParticipantId() string {
 	if x != nil {
 		return x.ParticipantId
+	}
+	return ""
+}
+
+func (x *CancelOrderRequest) GetLockId() string {
+	if x != nil {
+		return x.LockId
 	}
 	return ""
 }
@@ -440,13 +503,14 @@ const file_packages_proto_matching_proto_rawDesc = "" +
 	"\rtime_in_force\x18\x05 \x01(\x0e2\x15.matching.TimeInForceR\vtimeInForce\x12\x1a\n" +
 	"\bquantity\x18\x06 \x01(\x03R\bquantity\x12\x14\n" +
 	"\x05price\x18\a \x01(\x03R\x05price\x12\x17\n" +
-	"\alock_id\x18\b \x01(\tR\x06lockId\"H\n" +
+	"\alock_id\x18\b \x01(\tR\x06lockId\"_\n" +
 	"\x13SubmitOrderResponse\x12\x19\n" +
-	"\border_id\x18\x01 \x01(\tR\aorderId\x12\x16\n" +
-	"\x06status\x18\x02 \x01(\tR\x06status\"V\n" +
+	"\border_id\x18\x01 \x01(\tR\aorderId\x12-\n" +
+	"\x06status\x18\x02 \x01(\x0e2\x15.matching.OrderStatusR\x06status\"o\n" +
 	"\x12CancelOrderRequest\x12\x19\n" +
 	"\border_id\x18\x01 \x01(\tR\aorderId\x12%\n" +
-	"\x0eparticipant_id\x18\x02 \x01(\tR\rparticipantId\"K\n" +
+	"\x0eparticipant_id\x18\x02 \x01(\tR\rparticipantId\x12\x17\n" +
+	"\alock_id\x18\x03 \x01(\tR\x06lockId\"K\n" +
 	"\x13CancelOrderResponse\x12\x1c\n" +
 	"\tcancelled\x18\x01 \x01(\bR\tcancelled\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason*P\n" +
@@ -462,7 +526,13 @@ const file_packages_proto_matching_proto_rawDesc = "" +
 	"\vTimeInForce\x12\x1d\n" +
 	"\x19TIME_IN_FORCE_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11TIME_IN_FORCE_GTC\x10\x01\x12\x15\n" +
-	"\x11TIME_IN_FORCE_IOC\x10\x022\xa9\x01\n" +
+	"\x11TIME_IN_FORCE_IOC\x10\x02*\x94\x01\n" +
+	"\vOrderStatus\x12\x1c\n" +
+	"\x18ORDER_STATUS_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15ORDER_STATUS_ACCEPTED\x10\x01\x12\x19\n" +
+	"\x15ORDER_STATUS_REJECTED\x10\x02\x12\x17\n" +
+	"\x13ORDER_STATUS_FILLED\x10\x03\x12\x18\n" +
+	"\x14ORDER_STATUS_PARTIAL\x10\x042\xa9\x01\n" +
 	"\x0fMatchingService\x12J\n" +
 	"\vSubmitOrder\x12\x1c.matching.SubmitOrderRequest\x1a\x1d.matching.SubmitOrderResponse\x12J\n" +
 	"\vCancelOrder\x12\x1c.matching.CancelOrderRequest\x1a\x1d.matching.CancelOrderResponseB.Z,github.com/YHQZ1/esx/packages/proto/matchingb\x06proto3"
@@ -479,30 +549,32 @@ func file_packages_proto_matching_proto_rawDescGZIP() []byte {
 	return file_packages_proto_matching_proto_rawDescData
 }
 
-var file_packages_proto_matching_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_packages_proto_matching_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
 var file_packages_proto_matching_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_packages_proto_matching_proto_goTypes = []any{
 	(OrderSide)(0),              // 0: matching.OrderSide
 	(OrderType)(0),              // 1: matching.OrderType
 	(TimeInForce)(0),            // 2: matching.TimeInForce
-	(*SubmitOrderRequest)(nil),  // 3: matching.SubmitOrderRequest
-	(*SubmitOrderResponse)(nil), // 4: matching.SubmitOrderResponse
-	(*CancelOrderRequest)(nil),  // 5: matching.CancelOrderRequest
-	(*CancelOrderResponse)(nil), // 6: matching.CancelOrderResponse
+	(OrderStatus)(0),            // 3: matching.OrderStatus
+	(*SubmitOrderRequest)(nil),  // 4: matching.SubmitOrderRequest
+	(*SubmitOrderResponse)(nil), // 5: matching.SubmitOrderResponse
+	(*CancelOrderRequest)(nil),  // 6: matching.CancelOrderRequest
+	(*CancelOrderResponse)(nil), // 7: matching.CancelOrderResponse
 }
 var file_packages_proto_matching_proto_depIdxs = []int32{
 	0, // 0: matching.SubmitOrderRequest.side:type_name -> matching.OrderSide
 	1, // 1: matching.SubmitOrderRequest.type:type_name -> matching.OrderType
 	2, // 2: matching.SubmitOrderRequest.time_in_force:type_name -> matching.TimeInForce
-	3, // 3: matching.MatchingService.SubmitOrder:input_type -> matching.SubmitOrderRequest
-	5, // 4: matching.MatchingService.CancelOrder:input_type -> matching.CancelOrderRequest
-	4, // 5: matching.MatchingService.SubmitOrder:output_type -> matching.SubmitOrderResponse
-	6, // 6: matching.MatchingService.CancelOrder:output_type -> matching.CancelOrderResponse
-	5, // [5:7] is the sub-list for method output_type
-	3, // [3:5] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	3, // 3: matching.SubmitOrderResponse.status:type_name -> matching.OrderStatus
+	4, // 4: matching.MatchingService.SubmitOrder:input_type -> matching.SubmitOrderRequest
+	6, // 5: matching.MatchingService.CancelOrder:input_type -> matching.CancelOrderRequest
+	5, // 6: matching.MatchingService.SubmitOrder:output_type -> matching.SubmitOrderResponse
+	7, // 7: matching.MatchingService.CancelOrder:output_type -> matching.CancelOrderResponse
+	6, // [6:8] is the sub-list for method output_type
+	4, // [4:6] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_packages_proto_matching_proto_init() }
@@ -515,7 +587,7 @@ func file_packages_proto_matching_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_packages_proto_matching_proto_rawDesc), len(file_packages_proto_matching_proto_rawDesc)),
-			NumEnums:      3,
+			NumEnums:      4,
 			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,

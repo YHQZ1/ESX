@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/YHQZ1/esx/packages/logger"
 	"github.com/segmentio/kafka-go"
@@ -42,6 +43,10 @@ func (c *Consumer) RegisterHandler(fn HandlerFunc) {
 }
 
 func (c *Consumer) Start(ctx context.Context) error {
+	if c.handler == nil {
+		return fmt.Errorf("no handler registered")
+	}
+
 	c.log.Info("consumer started",
 		logger.Str("topic", c.reader.Config().Topic),
 		logger.Str("group", c.reader.Config().GroupID),
@@ -67,12 +72,31 @@ func (c *Consumer) Start(ctx context.Context) error {
 			Offset:    msg.Offset,
 		}
 
-		if err := c.handler(ctx, m); err != nil {
-			c.log.Error("handler failed", err,
+		const maxRetries = 3
+		var handlerErr error
+		for i := range maxRetries {
+			handlerErr = c.handler(ctx, m)
+			if handlerErr == nil {
+				break
+			}
+			c.log.Error("handler failed, retrying", handlerErr,
 				logger.Str("topic", msg.Topic),
 				logger.Str("key", string(msg.Key)),
+				logger.Int("attempt", i+1),
+			)
+		}
+
+		if handlerErr != nil {
+			c.log.Error("handler permanently failed, skipping", handlerErr,
+				logger.Str("topic", msg.Topic),
 				logger.Int64("offset", msg.Offset),
 			)
+			if err := c.reader.CommitMessages(ctx, msg); err != nil {
+				c.log.Error("failed to commit poison pill", err,
+					logger.Str("topic", msg.Topic),
+					logger.Int64("offset", msg.Offset),
+				)
+			}
 			continue
 		}
 
