@@ -9,5 +9,6 @@ use (
 	./services/participant-registry
 	./services/risk-engine
 	./services/settlement-engine
+	./tests
 	./tests/integration
 )
