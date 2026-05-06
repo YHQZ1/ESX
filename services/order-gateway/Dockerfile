@@ -1,18 +1,21 @@
 FROM golang:1.25-alpine AS builder
 
-WORKDIR /app
+RUN apk add --no-cache ca-certificates tzdata &&     adduser -D -g "" appuser
 
-COPY go.work go.work.sum ./
-COPY packages/ packages/
-COPY services/ services/
-COPY tests/ tests/
+WORKDIR /app
+COPY . .
 
 WORKDIR /app/services/order-gateway
-RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -o /bin/server ./cmd/server
 
-FROM alpine:3.19
-RUN apk --no-cache add ca-certificates tzdata
+RUN --mount=type=cache,target=/go/pkg/mod     --mount=type=cache,target=/root/.cache/go-build     CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /bin/server ./cmd/server
+
+FROM scratch
+
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /bin/server /bin/server
+
+USER appuser
 EXPOSE 8080
 ENTRYPOINT ["/bin/server"]
