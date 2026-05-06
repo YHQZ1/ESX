@@ -28,13 +28,12 @@ func TestDoubleEntryBookkeepingIntegrity(t *testing.T) {
 	t.Log("Auditing Cash Journal...")
 	var totalCashDebits, totalCashCredits sql.NullInt64
 
-	err = ledgerDB.QueryRow(`SELECT SUM(amount) FROM cash_journal WHERE entry_type = 'DEBIT'`).Scan(&totalCashDebits)
+	err = ledgerDB.QueryRow(`SELECT SUM(amount) FROM cash_journal WHERE entry_type = 'debit'`).Scan(&totalCashDebits)
 	require.NoError(t, err)
 
-	err = ledgerDB.QueryRow(`SELECT SUM(amount) FROM cash_journal WHERE entry_type = 'CREDIT'`).Scan(&totalCashCredits)
+	err = ledgerDB.QueryRow(`SELECT SUM(amount) FROM cash_journal WHERE entry_type = 'credit'`).Scan(&totalCashCredits)
 	require.NoError(t, err)
 
-	// If the tables are empty, they will be nil. Convert to 0 for safe comparison.
 	debits := totalCashDebits.Int64
 	credits := totalCashCredits.Int64
 
@@ -46,10 +45,10 @@ func TestDoubleEntryBookkeepingIntegrity(t *testing.T) {
 	t.Log("Auditing Securities Journal...")
 	var totalSecDebits, totalSecCredits sql.NullInt64
 
-	err = ledgerDB.QueryRow(`SELECT SUM(quantity) FROM securities_journal WHERE entry_type = 'DEBIT'`).Scan(&totalSecDebits)
+	err = ledgerDB.QueryRow(`SELECT SUM(quantity) FROM securities_journal WHERE entry_type = 'debit'`).Scan(&totalSecDebits)
 	require.NoError(t, err)
 
-	err = ledgerDB.QueryRow(`SELECT SUM(quantity) FROM securities_journal WHERE entry_type = 'CREDIT'`).Scan(&totalSecCredits)
+	err = ledgerDB.QueryRow(`SELECT SUM(quantity) FROM securities_journal WHERE entry_type = 'credit'`).Scan(&totalSecCredits)
 	require.NoError(t, err)
 
 	secDebits := totalSecDebits.Int64
@@ -59,8 +58,7 @@ func TestDoubleEntryBookkeepingIntegrity(t *testing.T) {
 	t.Logf("Total Securities Credits: %d shares", secCredits)
 	require.Equal(t, secDebits, secCredits, "CRITICAL FAILURE: Securities ledger is unbalanced! Phantom shares detected.")
 
-	// 3. Verify Active Locks (Should be zero if no active orders are resting)
-	// Note: Since the load test might leave resting limit orders in the book, we just print this metric.
+	// 3. Verify locked cash metric
 	var lockedCash sql.NullInt64
 	err = participantDB.QueryRow(`SELECT SUM(locked) FROM cash_accounts`).Scan(&lockedCash)
 	require.NoError(t, err)

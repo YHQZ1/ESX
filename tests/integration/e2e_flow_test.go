@@ -23,7 +23,6 @@ const (
 	dbDSN       = "postgres://esx:esx@localhost:5433/participant_registry?sslmode=disable"
 )
 
-// --- Helper Structs ---
 type Participant struct {
 	ID     string `json:"participant_id"`
 	APIKey string `json:"api_key"`
@@ -39,7 +38,6 @@ type WSMessage struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-// --- The E2E Test ---
 func TestEndToEndTradeLifecycle(t *testing.T) {
 	// 1. Setup Participants
 	t.Log("Registering participants...")
@@ -59,26 +57,27 @@ func TestEndToEndTradeLifecycle(t *testing.T) {
 	// 3. Connect to Market Data WebSocket
 	t.Log("Connecting to Market Data Feed...")
 	u, _ := url.Parse(marketData)
-	ws, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	wsConn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	require.NoError(t, err)
-	defer ws.Close()
+	defer wsConn.Close()
 
 	subMsg, _ := json.Marshal(map[string]string{"action": "subscribe", "channel": "trades.RELIANCE"})
-	require.NoError(t, ws.WriteMessage(websocket.TextMessage, subMsg))
+	require.NoError(t, wsConn.WriteMessage(websocket.TextMessage, subMsg))
 
 	// 4. Submit Orders
-	t.Log("Submitting live orders...")
+	// Orders are queued asynchronously — both return ACCEPTED immediately
+	t.Log("Submitting orders...")
 	sellOrder := submitOrder(t, seller.APIKey, "RELIANCE", "SELL", tradeQty, tradePrice)
-	require.Equal(t, "open", sellOrder.Status)
+	require.Equal(t, "ACCEPTED", sellOrder.Status)
 
 	buyOrder := submitOrder(t, buyer.APIKey, "RELIANCE", "BUY", tradeQty, tradePrice)
-	require.Equal(t, "filled", buyOrder.Status) // Maker-taker: The taker (buy) should fill instantly
+	require.Equal(t, "ACCEPTED", buyOrder.Status)
 
 	// 5. Await WebSocket Broadcast
 	t.Log("Waiting for trade execution broadcast over WebSocket...")
-	ws.SetReadDeadline(time.Now().Add(10 * time.Second))
+	wsConn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	for {
-		_, msg, err := ws.ReadMessage()
+		_, msg, err := wsConn.ReadMessage()
 		require.NoError(t, err)
 
 		var m WSMessage
@@ -89,17 +88,15 @@ func TestEndToEndTradeLifecycle(t *testing.T) {
 		}
 	}
 
-	// 6. Audit the Ledger (Validating Kafka Async Flow & DvP)
+	// 6. Poll Ledger for final settlement reconciliation
+	// Settlement and Ledger operate asynchronously via Kafka so we poll
 	t.Log("Polling Ledger Service for final settlement reconciliation...")
-
-	// Polling is required because Settlement and Ledger operate asynchronously via Kafka
 	require.Eventually(t, func() bool {
 		buyerBal := getLedgerBalance(t, buyer.ID)
 		sellerBal := getLedgerBalance(t, seller.ID)
 		buyerPos := getLedgerPositions(t, buyer.ID)
 		sellerPos := getLedgerPositions(t, seller.ID)
 
-		// Assert conditions
 		buyerCashCorrect := buyerBal == (initialCash - totalTradeValue)
 		sellerCashCorrect := sellerBal == totalTradeValue
 		buyerSharesCorrect := buyerPos["RELIANCE"] == tradeQty
@@ -108,10 +105,9 @@ func TestEndToEndTradeLifecycle(t *testing.T) {
 		return buyerCashCorrect && sellerCashCorrect && buyerSharesCorrect && sellerSharesCorrect
 	}, 15*time.Second, 500*time.Millisecond, "Ledger did not reconcile correctly within timeout")
 
-	t.Log("SUCCESS: Full Trade Lifecycle Reconciled flawlessly across 8 services!")
+	t.Log("SUCCESS: Full Trade Lifecycle Reconciled across 8 services!")
 }
 
-// --- Helper Functions ---
 func registerParticipant(t *testing.T, name, email string) Participant {
 	body, _ := json.Marshal(map[string]string{"name": name, "email": email})
 	resp, err := http.Post(registryURL+"/participants/register", "application/json", bytes.NewBuffer(body))
@@ -137,7 +133,13 @@ func injectSharesDB(t *testing.T, participantID, symbol string, quantity int64) 
 	require.NoError(t, err)
 	defer db.Close()
 
-	_, err = db.Exec(`INSERT INTO securities_accounts (participant_id, symbol, quantity) VALUES ($1, $2, $3)`, participantID, symbol, quantity)
+	_, err = db.Exec(
+		`INSERT INTO securities_accounts (participant_id, symbol, quantity)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (participant_id, symbol)
+		 DO UPDATE SET quantity = securities_accounts.quantity + $3`,
+		participantID, symbol, quantity,
+	)
 	require.NoError(t, err)
 }
 
@@ -152,7 +154,7 @@ func submitOrder(t *testing.T, apiKey, symbol, side string, qty, price int64) Or
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.True(t, resp.StatusCode == 201 || resp.StatusCode == 200, "Order submission failed")
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	var result OrderResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
@@ -165,7 +167,7 @@ func getLedgerBalance(t *testing.T, participantID string) int64 {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0 // Account might not have ledger entries yet
+		return 0
 	}
 
 	var res struct {

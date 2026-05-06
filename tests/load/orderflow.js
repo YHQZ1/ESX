@@ -7,9 +7,11 @@ export const options = {
       executor: "ramping-vus",
       startVUs: 0,
       stages: [
-        { duration: "10s", target: 20 },
-        { duration: "30s", target: 20 },
-        { duration: "10s", target: 0 },
+        { duration: "10s", target: 100 }, // Fast ramp to 100 VUs
+        { duration: "30s", target: 100 }, // Hold steady
+        { duration: "10s", target: 200 }, // Spike to 200 VUs
+        { duration: "20s", target: 200 }, // Hold spike
+        { duration: "10s", target: 0 }, // Cool down
       ],
     },
   },
@@ -20,65 +22,77 @@ export const options = {
 };
 
 const GATEWAY_URL = "http://localhost:8080";
-const REGISTRY_URL = "http://localhost:8081";
 
-// The setup function runs ONCE before the load test begins.
 export function setup() {
-  const ts = new Date().getTime();
-  const email = `k6_trader_${ts}@esx.com`;
+  const buyerKeys = [];
+  const sellerKeys = [];
 
-  // 1. Register User
-  const regRes = http.post(
-    `${REGISTRY_URL}/participants/register`,
-    JSON.stringify({
-      name: "k6 Load Tester",
-      email: email,
-    }),
-    { headers: { "Content-Type": "application/json" } },
-  );
+  for (let i = 0; i < 20; i++) {
+    const bKey = __ENV[`BUYER_KEY_${i}`];
+    if (!bKey) throw new Error(`Missing BUYER_KEY_${i} env var`);
+    buyerKeys.push(bKey);
 
-  if (regRes.status !== 201) {
-    throw new Error(`Failed to register participant: ${regRes.body}`);
+    const sKey = __ENV[`SELLER_KEY_${i}`];
+    if (!sKey) throw new Error(`Missing SELLER_KEY_${i} env var`);
+    sellerKeys.push(sKey);
   }
 
-  const apiKey = regRes.json("api_key");
-  const participantId = regRes.json("participant_id");
-
-  // 2. Fund User: Increased to 100,000,000,000 paise (100 Crore paise)
-  http.post(
-    `${REGISTRY_URL}/participants/${participantId}/deposit`,
-    JSON.stringify({
-      amount: 100000000000,
-    }),
-    { headers: { "Content-Type": "application/json" } },
-  );
-
-  return { apiKey: apiKey };
+  return { buyerKeys, sellerKeys };
 }
 
-// The default function runs repeatedly for every Virtual User (VU)
 export default function (data) {
+  const vuIndex = __VU - 1;
+  const buyerKey = data.buyerKeys[vuIndex % data.buyerKeys.length];
+
+  // Select a random seller for each iteration to avoid row-lock contention
+  const sellerKey =
+    data.sellerKeys[Math.floor(Math.random() * data.sellerKeys.length)];
+
   const price = 49500 + Math.floor(Math.random() * 1000);
+  const qty = Math.floor(Math.random() * 5) + 1;
+  const isSell = __ITER % 2 === 0;
 
-  const payload = JSON.stringify({
-    symbol: "RELIANCE",
-    side: "BUY",
-    type: "LIMIT",
-    quantity: Math.floor(Math.random() * 5) + 1,
-    price: price,
-  });
-
-  const params = {
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": data.apiKey,
-    },
-  };
-
-  const res = http.post(`${GATEWAY_URL}/orders`, payload, params);
-
-  check(res, {
-    "status is 201": (r) => r.status === 201,
-    "order accepted": (r) => r.json("order_id") !== undefined,
-  });
+  if (isSell) {
+    const sellRes = http.post(
+      `${GATEWAY_URL}/orders`,
+      JSON.stringify({
+        symbol: "RELIANCE",
+        side: "SELL",
+        type: "LIMIT",
+        quantity: qty,
+        price: price,
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": sellerKey, // <-- Use the randomized seller key here
+        },
+      },
+    );
+    check(sellRes, {
+      "sell order accepted": (r) => r.status === 201,
+      "sell order_id present": (r) => r.json("order_id") !== undefined,
+    });
+  } else {
+    const buyRes = http.post(
+      `${GATEWAY_URL}/orders`,
+      JSON.stringify({
+        symbol: "RELIANCE",
+        side: "BUY",
+        type: "LIMIT",
+        quantity: qty,
+        price: price,
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": buyerKey,
+        },
+      },
+    );
+    check(buyRes, {
+      "buy order accepted": (r) => r.status === 201,
+      "buy order_id present": (r) => r.json("order_id") !== undefined,
+    });
+  }
 }
