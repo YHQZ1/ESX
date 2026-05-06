@@ -11,7 +11,7 @@ type Order struct {
 	ParticipantID uuid.UUID `json:"participant_id"`
 	Symbol        string    `json:"symbol"`
 	Side          string    `json:"side"`
-	Type          string    `json:"type"`
+	OrderType     string    `json:"order_type"`
 	TimeInForce   string    `json:"time_in_force"`
 	Quantity      int64     `json:"quantity"`
 	FilledQty     int64     `json:"filled_qty"`

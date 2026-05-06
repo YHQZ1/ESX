@@ -11,6 +11,7 @@ import (
 	"github.com/YHQZ1/esx/packages/kafka"
 	"github.com/YHQZ1/esx/packages/logger"
 	pb "github.com/YHQZ1/esx/packages/proto/matching"
+	pbrisk "github.com/YHQZ1/esx/packages/proto/risk"
 	"github.com/YHQZ1/esx/services/matching-engine/internal/circuit"
 	"github.com/YHQZ1/esx/services/matching-engine/internal/db"
 	grpcserver "github.com/YHQZ1/esx/services/matching-engine/internal/grpc"
@@ -20,6 +21,7 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -34,8 +36,17 @@ func main() {
 	}
 	defer database.Close()
 
-	if err := database.Ping(); err != nil {
-		log.Fatal("failed to ping database", err)
+	for i := range 5 {
+		if err := database.Ping(); err == nil {
+			break
+		} else if i == 4 {
+			log.Fatal("failed to ping database after retries", err)
+		} else {
+			log.Warn("database not ready, retrying",
+				logger.Int("attempt", i+1),
+			)
+			time.Sleep(2 * time.Second)
+		}
 	}
 
 	database.SetMaxOpenConns(1000)
@@ -59,11 +70,24 @@ func main() {
 		}
 	}
 
+	riskAddr := os.Getenv("RISK_ENGINE_ADDR")
+	if riskAddr == "" {
+		riskAddr = "localhost:9093"
+	}
+	riskConn, err := grpc.NewClient(riskAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatal("failed to connect to risk engine", err)
+	}
+	defer riskConn.Close()
+	riskClient := pbrisk.NewRiskServiceClient(riskConn)
+
 	queries := db.New(database)
+	batcher := db.NewOrderBatcher(database)
+	defer batcher.Stop()
 	book := orderbook.New(rdb)
 	breaker := circuit.New(book, cbProducer, threshold, log)
-	engine := matching.New(book, queries, breaker, producer, log)
-	srv := grpcserver.NewServer(queries, engine, log)
+	engine := matching.New(book, queries, breaker, producer, log, riskClient)
+	srv := grpcserver.NewServer(queries, batcher, engine, log)
 
 	lis, err := net.Listen("tcp", ":9094")
 	if err != nil {

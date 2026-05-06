@@ -15,60 +15,75 @@ import (
 
 type Server struct {
 	pb.UnimplementedMatchingServiceServer
-	queries db.Querier
-	engine  *matching.Engine
-	log     *logger.Logger
-	// --- ADD CHANNEL ---
+	queries   db.Querier
+	batcher   *db.OrderBatcher
+	engine    *matching.Engine
+	log       *logger.Logger
 	orderChan chan db.Order
 }
 
-func NewServer(queries db.Querier, engine *matching.Engine, log *logger.Logger) *Server {
+func NewServer(queries db.Querier, batcher *db.OrderBatcher, engine *matching.Engine, log *logger.Logger) *Server {
 	s := &Server{
 		queries:   queries,
+		batcher:   batcher,
 		engine:    engine,
 		log:       log,
-		orderChan: make(chan db.Order, 50000), // Buffer for 50k orders
+		orderChan: make(chan db.Order, 500000),
 	}
-
-	// Start the single-threaded Matching Worker
 	go s.runMatcher()
-
 	return s
 }
 
 func (s *Server) runMatcher() {
 	for order := range s.orderChan {
-		// Process order in RAM without locks
 		s.engine.Submit(context.Background(), order)
 	}
 }
 
 func (s *Server) SubmitOrder(ctx context.Context, req *pb.SubmitOrderRequest) (*pb.SubmitOrderResponse, error) {
-	participantID, _ := uuid.Parse(req.ParticipantId)
-	lockID, _ := uuid.Parse(req.LockId)
-	orderID := uuid.New()
+	participantID, err := uuid.Parse(req.ParticipantId)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid participant_id")
+	}
+
+	lockID, err := uuid.Parse(req.LockId)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid lock_id")
+	}
+
+	orderSide := strings.TrimPrefix(req.Side.String(), "ORDER_SIDE_")
+	orderType := strings.TrimPrefix(req.Type.String(), "ORDER_TYPE_")
+	timeInForce := strings.TrimPrefix(req.TimeInForce.String(), "TIME_IN_FORCE_")
 
 	order := db.Order{
-		ID:            orderID,
+		ID:            uuid.New(),
 		ParticipantID: participantID,
 		Symbol:        req.Symbol,
-		Side:          strings.TrimPrefix(req.Side.String(), "ORDER_SIDE_"),
-		Type:          strings.TrimPrefix(req.Type.String(), "ORDER_TYPE_"),
+		Side:          orderSide,
+		OrderType:     orderType,
+		TimeInForce:   timeInForce,
 		Quantity:      req.Quantity,
 		Price:         req.Price,
 		LockID:        lockID,
+		Status:        "open",
 	}
 
-	// Non-blocking: drop into pipeline and return instantly
+	// Write to Postgres async via batcher
+	s.batcher.Add(order)
+
 	select {
 	case s.orderChan <- order:
-		return &pb.SubmitOrderResponse{OrderId: orderID.String(), Status: "queued"}, nil
+		return &pb.SubmitOrderResponse{
+			OrderId: order.ID.String(),
+			Status:  pb.OrderStatus_ORDER_STATUS_ACCEPTED,
+		}, nil
 	default:
-		return nil, status.Error(codes.ResourceExhausted, "buffer full")
+		s.log.Warn("order channel buffer full",
+			logger.Str("symbol", req.Symbol),
+		)
+		return nil, status.Error(codes.ResourceExhausted, "order buffer full, retry")
 	}
 }
-
-// ... keep CancelOrder as is
 
 func (s *Server) CancelOrder(ctx context.Context, req *pb.CancelOrderRequest) (*pb.CancelOrderResponse, error) {
 	orderID, err := uuid.Parse(req.OrderId)
@@ -81,11 +96,30 @@ func (s *Server) CancelOrder(ctx context.Context, req *pb.CancelOrderRequest) (*
 		return nil, status.Error(codes.InvalidArgument, "invalid participant_id")
 	}
 
-	_, err = s.queries.CancelOrder(ctx, orderID, participantID)
+	order, err := s.queries.CancelOrder(ctx, orderID, participantID)
 	if err != nil {
+		s.log.Warn("order not found or already closed",
+			logger.Str("order_id", req.OrderId),
+		)
 		return &pb.CancelOrderResponse{Cancelled: false, Reason: "order not found or already closed"}, nil
 	}
 
-	s.log.Info("order cancelled", logger.Str("order_id", req.OrderId))
+	// Release the lock on the Risk Engine
+	if req.LockId != "" {
+		lockID, err := uuid.Parse(req.LockId)
+		if err == nil {
+			if releaseErr := s.engine.ReleaseLock(ctx, lockID, order.FilledQty); releaseErr != nil {
+				s.log.Error("failed to release lock on cancel", releaseErr,
+					logger.Str("order_id", req.OrderId),
+					logger.Str("lock_id", req.LockId),
+				)
+			}
+		}
+	}
+
+	s.log.Info("order cancelled",
+		logger.Str("order_id", req.OrderId),
+		logger.Str("participant_id", req.ParticipantId),
+	)
 	return &pb.CancelOrderResponse{Cancelled: true}, nil
 }

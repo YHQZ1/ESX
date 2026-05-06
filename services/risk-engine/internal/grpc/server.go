@@ -30,59 +30,29 @@ func (s *Server) CheckAndLock(ctx context.Context, req *pb.CheckAndLockRequest) 
 	}
 
 	if req.Side == pb.OrderSide_ORDER_SIDE_BUY {
-		// --- OLD POSTGRES CHECK COMMENTED OUT ---
-		// if err := s.checker.CheckBuy(ctx, participantID, req.Price, req.Quantity); err != nil {
-		// 	s.log.Info("risk check rejected",
-		// 		logger.Str("participant_id", req.ParticipantId),
-		// 		logger.Str("symbol", req.Symbol),
-		// 		logger.Str("reason", err.Error()),
-		// 	)
-		// 	return &pb.CheckAndLockResponse{Approved: false, Reason: err.Error()}, nil
-		// } // <-- Notice this brace is safely commented out now!
-
+		// Pure Redis atomic lock - no Postgres reads on the hot path
 		lockID, err := s.locker.LockCash(ctx, participantID, req.Symbol, req.Price, req.Quantity)
 		if err != nil {
-			// Catch the new Redis rejection gracefully
 			if err.Error() == "insufficient funds" {
 				s.log.Info("risk check rejected by redis", logger.Str("participant_id", req.ParticipantId), logger.Str("reason", err.Error()))
 				return &pb.CheckAndLockResponse{Approved: false, Reason: err.Error()}, nil
 			}
-
 			s.log.Error("failed to lock cash", err, logger.Str("participant_id", req.ParticipantId))
 			return nil, status.Error(codes.Internal, "failed to lock collateral")
 		}
-
-		s.log.Info("cash locked",
-			logger.Str("participant_id", req.ParticipantId),
-			logger.Str("symbol", req.Symbol),
-			logger.Str("lock_id", lockID.String()),
-		)
-
 		return &pb.CheckAndLockResponse{Approved: true, LockId: lockID.String()}, nil
 	}
 
 	if req.Side == pb.OrderSide_ORDER_SIDE_SELL {
-		if err := s.checker.CheckSell(ctx, participantID, req.Symbol, req.Quantity); err != nil {
-			s.log.Info("risk check rejected",
-				logger.Str("participant_id", req.ParticipantId),
-				logger.Str("symbol", req.Symbol),
-				logger.Str("reason", err.Error()),
-			)
-			return &pb.CheckAndLockResponse{Approved: false, Reason: err.Error()}, nil
-		}
-
 		lockID, err := s.locker.LockShares(ctx, participantID, req.Symbol, req.Quantity)
 		if err != nil {
+			if err.Error() == "insufficient shares" {
+				s.log.Info("risk check rejected by redis", logger.Str("participant_id", req.ParticipantId), logger.Str("reason", err.Error()))
+				return &pb.CheckAndLockResponse{Approved: false, Reason: err.Error()}, nil
+			}
 			s.log.Error("failed to lock shares", err, logger.Str("participant_id", req.ParticipantId))
 			return nil, status.Error(codes.Internal, "failed to lock collateral")
 		}
-
-		s.log.Info("shares locked",
-			logger.Str("participant_id", req.ParticipantId),
-			logger.Str("symbol", req.Symbol),
-			logger.Str("lock_id", lockID.String()),
-		)
-
 		return &pb.CheckAndLockResponse{Approved: true, LockId: lockID.String()}, nil
 	}
 

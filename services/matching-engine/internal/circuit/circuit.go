@@ -9,7 +9,6 @@ import (
 	"github.com/YHQZ1/esx/packages/logger"
 	"github.com/YHQZ1/esx/services/matching-engine/internal/events"
 	"github.com/YHQZ1/esx/services/matching-engine/internal/orderbook"
-	"github.com/google/uuid"
 )
 
 type Breaker struct {
@@ -85,7 +84,5 @@ func (b *Breaker) Lift(ctx context.Context, symbol string) error {
 	}
 
 	b.log.Info("circuit breaker lifted", logger.Str("symbol", symbol))
-
-	_ = uuid.Nil
 	return nil
 }

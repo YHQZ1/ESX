@@ -8,7 +8,7 @@ import (
 )
 
 type Querier interface {
-	CreateLock(ctx context.Context, arg CreateLockParams) (Lock, error)
+	CreateLockWithID(ctx context.Context, arg CreateLockParams) (Lock, error)
 	GetLock(ctx context.Context, id uuid.UUID) (Lock, error)
 	UpdateLockStatus(ctx context.Context, id uuid.UUID, status string) error
 	GetCashAccount(ctx context.Context, participantID uuid.UUID) (CashAccount, error)
@@ -20,6 +20,7 @@ type Querier interface {
 }
 
 type CreateLockParams struct {
+	ID            uuid.UUID
 	ParticipantID uuid.UUID
 	Symbol        string
 	Side          string
@@ -43,6 +44,17 @@ func (q *Queries) CreateLock(ctx context.Context, arg CreateLockParams) (Lock, e
 		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING id, participant_id, symbol, side, quantity, price, status, created_at, updated_at`,
 		arg.ParticipantID, arg.Symbol, arg.Side, arg.Quantity, arg.Price,
+	).Scan(&l.ID, &l.ParticipantID, &l.Symbol, &l.Side, &l.Quantity, &l.Price, &l.Status, &l.CreatedAt, &l.UpdatedAt)
+	return l, err
+}
+
+func (q *Queries) CreateLockWithID(ctx context.Context, arg CreateLockParams) (Lock, error) {
+	var l Lock
+	err := q.riskDB.QueryRowContext(ctx,
+		`INSERT INTO locks (id, participant_id, symbol, side, quantity, price)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, participant_id, symbol, side, quantity, price, status, created_at, updated_at`,
+		arg.ID, arg.ParticipantID, arg.Symbol, arg.Side, arg.Quantity, arg.Price,
 	).Scan(&l.ID, &l.ParticipantID, &l.Symbol, &l.Side, &l.Quantity, &l.Price, &l.Status, &l.CreatedAt, &l.UpdatedAt)
 	return l, err
 }

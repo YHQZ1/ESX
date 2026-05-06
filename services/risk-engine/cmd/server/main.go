@@ -19,6 +19,22 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+func pingWithRetry(database *sql.DB, name string, log *logger.Logger) {
+	for i := range 5 {
+		if err := database.Ping(); err == nil {
+			return
+		} else if i == 4 {
+			log.Fatal("failed to ping "+name+" after retries", err)
+		} else {
+			log.Warn("database not ready, retrying",
+				logger.Str("db", name),
+				logger.Int("attempt", i+1),
+			)
+			time.Sleep(2 * time.Second)
+		}
+	}
+}
+
 func main() {
 	godotenv.Load()
 
@@ -29,35 +45,34 @@ func main() {
 		log.Fatal("failed to connect to risk database", err)
 	}
 	defer riskDB.Close()
-
-	if err := riskDB.Ping(); err != nil {
-		log.Fatal("failed to ping risk database", err)
-	}
+	pingWithRetry(riskDB, "risk-engine", log)
 
 	participantDB, err := sql.Open("postgres", os.Getenv("PARTICIPANT_DB_URL"))
 	if err != nil {
 		log.Fatal("failed to connect to participant database", err)
 	}
 	defer participantDB.Close()
+	pingWithRetry(participantDB, "participant-registry", log)
 
-	if err := participantDB.Ping(); err != nil {
-		log.Fatal("failed to ping participant database", err)
-	}
-
-	riskDB.SetMaxOpenConns(50)
-	riskDB.SetMaxIdleConns(50)
+	riskDB.SetMaxOpenConns(500)
+	riskDB.SetMaxIdleConns(500)
 	riskDB.SetConnMaxLifetime(5 * time.Minute)
 
-	participantDB.SetMaxOpenConns(50)
-	participantDB.SetMaxIdleConns(50)
+	participantDB.SetMaxOpenConns(500)
+	participantDB.SetMaxIdleConns(500)
 	participantDB.SetConnMaxLifetime(5 * time.Minute)
+
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	rdb := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
 
 	queries := db.New(riskDB, participantDB)
 	checker := checks.New(queries)
-	rdb := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	locker := locks.New(queries, rdb)
+	locker := locks.New(queries, rdb, log)
 	srv := grpcserver.NewServer(checker, locker, log)
 
 	lis, err := net.Listen("tcp", ":9093")
@@ -69,7 +84,7 @@ func main() {
 	pb.RegisterRiskServiceServer(s, srv)
 	reflection.Register(s)
 
-	log.Info("grpc server listening", logger.Str("addr", ":9092"))
+	log.Info("grpc server listening", logger.Str("addr", ":9093"))
 
 	if err := s.Serve(lis); err != nil {
 		log.Fatal("grpc server failed", err)

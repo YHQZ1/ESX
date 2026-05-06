@@ -7,6 +7,7 @@ import (
 
 	"github.com/YHQZ1/esx/packages/kafka"
 	"github.com/YHQZ1/esx/packages/logger"
+	pbrisk "github.com/YHQZ1/esx/packages/proto/risk"
 	"github.com/YHQZ1/esx/services/matching-engine/internal/circuit"
 	"github.com/YHQZ1/esx/services/matching-engine/internal/db"
 	"github.com/YHQZ1/esx/services/matching-engine/internal/events"
@@ -15,15 +16,16 @@ import (
 )
 
 type Engine struct {
-	book     *orderbook.Book
-	queries  db.Querier
-	breaker  *circuit.Breaker
-	producer *kafka.Producer
-	log      *logger.Logger
+	book       *orderbook.Book
+	queries    db.Querier
+	breaker    *circuit.Breaker
+	producer   *kafka.Producer
+	log        *logger.Logger
+	riskClient pbrisk.RiskServiceClient
 }
 
-func New(book *orderbook.Book, queries db.Querier, breaker *circuit.Breaker, producer *kafka.Producer, log *logger.Logger) *Engine {
-	return &Engine{book: book, queries: queries, breaker: breaker, producer: producer, log: log}
+func New(book *orderbook.Book, queries db.Querier, breaker *circuit.Breaker, producer *kafka.Producer, log *logger.Logger, riskClient pbrisk.RiskServiceClient) *Engine {
+	return &Engine{book: book, queries: queries, breaker: breaker, producer: producer, log: log, riskClient: riskClient}
 }
 
 func (e *Engine) Submit(ctx context.Context, order db.Order) (string, error) {
@@ -43,7 +45,6 @@ func (e *Engine) Submit(ctx context.Context, order db.Order) (string, error) {
 
 func (e *Engine) matchBuy(ctx context.Context, order db.Order) (string, error) {
 	remaining := order.Quantity
-
 	for remaining > 0 {
 		ask, err := e.book.BestAsk(ctx, order.Symbol)
 		if err != nil {
@@ -52,8 +53,7 @@ func (e *Engine) matchBuy(ctx context.Context, order db.Order) (string, error) {
 		if ask == nil {
 			break
 		}
-
-		if order.Type == "LIMIT" && order.Price < ask.Price {
+		if order.OrderType == "LIMIT" && order.Price < ask.Price {
 			break
 		}
 
@@ -78,16 +78,12 @@ func (e *Engine) matchBuy(ctx context.Context, order db.Order) (string, error) {
 			if err := e.book.Update(ctx, order.Symbol, orderbook.SideSell, *ask, ask.Quantity-fillQty); err != nil {
 				return "", err
 			}
-			if err := e.queries.UpdateOrderStatus(ctx, ask.OrderID, "partial", ask.Quantity-(ask.Quantity-fillQty)); err != nil {
-				return "", err
-			}
+			go e.queries.UpdateOrderStatus(context.Background(), ask.OrderID, "partial", ask.Quantity-(ask.Quantity-fillQty))
 		} else {
 			if err := e.book.Remove(ctx, order.Symbol, orderbook.SideSell, *ask); err != nil {
 				return "", err
 			}
-			if err := e.queries.UpdateOrderStatus(ctx, ask.OrderID, "filled", ask.Quantity); err != nil {
-				return "", err
-			}
+			go e.queries.UpdateOrderStatus(context.Background(), ask.OrderID, "filled", ask.Quantity)
 		}
 
 		if err := e.book.SetLastPrice(ctx, order.Symbol, tradePrice); err != nil {
@@ -96,26 +92,17 @@ func (e *Engine) matchBuy(ctx context.Context, order db.Order) (string, error) {
 	}
 
 	filledQty := order.Quantity - remaining
-
 	if remaining == 0 {
-		if err := e.queries.UpdateOrderStatus(ctx, order.ID, "filled", filledQty); err != nil {
-			return "", err
-		}
+		go e.queries.UpdateOrderStatus(context.Background(), order.ID, "filled", filledQty)
 		return "filled", nil
 	}
 
 	if filledQty > 0 {
-		if err := e.queries.UpdateOrderStatus(ctx, order.ID, "partial", filledQty); err != nil {
-			return "", err
-		}
-
+		go e.queries.UpdateOrderStatus(context.Background(), order.ID, "partial", filledQty)
 		if order.TimeInForce == "IOC" {
-			if err := e.queries.UpdateOrderStatus(ctx, order.ID, "cancelled", filledQty); err != nil {
-				return "", err
-			}
+			go e.queries.UpdateOrderStatus(context.Background(), order.ID, "cancelled", filledQty)
 			return "partial_cancelled", nil
 		}
-
 		entry := orderbook.Entry{
 			OrderID:       order.ID,
 			ParticipantID: order.ParticipantID,
@@ -133,9 +120,7 @@ func (e *Engine) matchBuy(ctx context.Context, order db.Order) (string, error) {
 	}
 
 	if order.TimeInForce == "IOC" {
-		if err := e.queries.UpdateOrderStatus(ctx, order.ID, "cancelled", 0); err != nil {
-			return "", err
-		}
+		go e.queries.UpdateOrderStatus(context.Background(), order.ID, "cancelled", 0)
 		return "cancelled", nil
 	}
 
@@ -157,7 +142,6 @@ func (e *Engine) matchBuy(ctx context.Context, order db.Order) (string, error) {
 
 func (e *Engine) matchSell(ctx context.Context, order db.Order) (string, error) {
 	remaining := order.Quantity
-
 	for remaining > 0 {
 		bid, err := e.book.BestBid(ctx, order.Symbol)
 		if err != nil {
@@ -166,8 +150,7 @@ func (e *Engine) matchSell(ctx context.Context, order db.Order) (string, error) 
 		if bid == nil {
 			break
 		}
-
-		if order.Type == "LIMIT" && order.Price > bid.Price {
+		if order.OrderType == "LIMIT" && order.Price > bid.Price {
 			break
 		}
 
@@ -192,16 +175,12 @@ func (e *Engine) matchSell(ctx context.Context, order db.Order) (string, error) 
 			if err := e.book.Update(ctx, order.Symbol, orderbook.SideBuy, *bid, bid.Quantity-fillQty); err != nil {
 				return "", err
 			}
-			if err := e.queries.UpdateOrderStatus(ctx, bid.OrderID, "partial", bid.Quantity-(bid.Quantity-fillQty)); err != nil {
-				return "", err
-			}
+			go e.queries.UpdateOrderStatus(context.Background(), bid.OrderID, "partial", bid.Quantity-(bid.Quantity-fillQty))
 		} else {
 			if err := e.book.Remove(ctx, order.Symbol, orderbook.SideBuy, *bid); err != nil {
 				return "", err
 			}
-			if err := e.queries.UpdateOrderStatus(ctx, bid.OrderID, "filled", bid.Quantity); err != nil {
-				return "", err
-			}
+			go e.queries.UpdateOrderStatus(context.Background(), bid.OrderID, "filled", bid.Quantity)
 		}
 
 		if err := e.book.SetLastPrice(ctx, order.Symbol, tradePrice); err != nil {
@@ -210,26 +189,17 @@ func (e *Engine) matchSell(ctx context.Context, order db.Order) (string, error) 
 	}
 
 	filledQty := order.Quantity - remaining
-
 	if remaining == 0 {
-		if err := e.queries.UpdateOrderStatus(ctx, order.ID, "filled", filledQty); err != nil {
-			return "", err
-		}
+		go e.queries.UpdateOrderStatus(context.Background(), order.ID, "filled", filledQty)
 		return "filled", nil
 	}
 
 	if filledQty > 0 {
-		if err := e.queries.UpdateOrderStatus(ctx, order.ID, "partial", filledQty); err != nil {
-			return "", err
-		}
-
+		go e.queries.UpdateOrderStatus(context.Background(), order.ID, "partial", filledQty)
 		if order.TimeInForce == "IOC" {
-			if err := e.queries.UpdateOrderStatus(ctx, order.ID, "cancelled", filledQty); err != nil {
-				return "", err
-			}
+			go e.queries.UpdateOrderStatus(context.Background(), order.ID, "cancelled", filledQty)
 			return "partial_cancelled", nil
 		}
-
 		entry := orderbook.Entry{
 			OrderID:       order.ID,
 			ParticipantID: order.ParticipantID,
@@ -247,9 +217,7 @@ func (e *Engine) matchSell(ctx context.Context, order db.Order) (string, error) 
 	}
 
 	if order.TimeInForce == "IOC" {
-		if err := e.queries.UpdateOrderStatus(ctx, order.ID, "cancelled", 0); err != nil {
-			return "", err
-		}
+		go e.queries.UpdateOrderStatus(context.Background(), order.ID, "cancelled", 0)
 		return "cancelled", nil
 	}
 
@@ -304,21 +272,14 @@ func (e *Engine) executeTrade(ctx context.Context, incoming db.Order, resting or
 		Timestamp:   time.Now().UnixNano(),
 	}
 
-	if err := e.producer.Publish(ctx, incoming.Symbol, event); err != nil {
-		e.log.Error("failed to publish trade.executed", err,
-			logger.Str("symbol", incoming.Symbol),
-		)
-		return err
-	}
+	// Fire-and-forget Kafka publishing to unblock the matcher loop
+	go func() {
+		if err := e.producer.Publish(context.Background(), incoming.Symbol, event); err != nil {
+			e.log.Error("failed to publish trade.executed", err, logger.Str("symbol", incoming.Symbol))
+		}
+	}()
 
-	e.log.Info("trade executed",
-		logger.Str("symbol", incoming.Symbol),
-		logger.Int64("price", price),
-		logger.Int64("quantity", quantity),
-		logger.Str("buyer", buyerID.String()),
-		logger.Str("seller", sellerID.String()),
-	)
-
+	e.log.Info("trade executed", logger.Str("symbol", incoming.Symbol), logger.Int64("price", price), logger.Int64("quantity", quantity), logger.Str("buyer", buyerID.String()), logger.Str("seller", sellerID.String()))
 	return nil
 }
 
@@ -327,4 +288,16 @@ func min(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+func (e *Engine) ReleaseLock(ctx context.Context, lockID uuid.UUID, filledQty int64) error {
+	_, err := e.riskClient.ReleaseLock(ctx, &pbrisk.ReleaseLockRequest{
+		LockId:         lockID.String(),
+		FilledQuantity: filledQty,
+	})
+	if err != nil {
+		e.log.Error("failed to release lock", err, logger.Str("lock_id", lockID.String()))
+		return err
+	}
+	return nil
 }
