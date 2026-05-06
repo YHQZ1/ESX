@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/YHQZ1/esx/packages/logger"
 	pb "github.com/YHQZ1/esx/packages/proto/matching"
@@ -35,8 +36,38 @@ func NewServer(queries db.Querier, batcher *db.OrderBatcher, engine *matching.En
 }
 
 func (s *Server) runMatcher() {
+	var count int64
+	var totalTime time.Duration
+
+	s.log.Info("matcher loop started with microsecond telemetry")
+
 	for order := range s.orderChan {
+		start := time.Now()
+
+		// This single call triggers multiple synchronous Redis TCP hops
 		s.engine.Submit(context.Background(), order)
+
+		elapsed := time.Since(start)
+		totalTime += elapsed
+		count++
+
+		// Print telemetry every 500 orders
+		if count%10 == 0 {
+			avgMicroseconds := totalTime.Microseconds() / 10
+
+			// Prevent division by zero if it's too fast
+			maxRps := int64(0)
+			if avgMicroseconds > 0 {
+				maxRps = 1000000 / avgMicroseconds
+			}
+
+			s.log.Warn("MATCHER BOTTLENECK PROOF",
+				logger.Int64("orders_processed", count),
+				logger.Int64("avg_time_per_order_microseconds", avgMicroseconds),
+				logger.Int64("theoretical_max_rps", maxRps),
+			)
+			totalTime = 0 // reset for next batch
+		}
 	}
 }
 

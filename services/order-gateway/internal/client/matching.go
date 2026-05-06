@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"sync/atomic"
 
 	pb "github.com/YHQZ1/esx/packages/proto/matching"
 	"google.golang.org/grpc"
@@ -9,19 +10,30 @@ import (
 )
 
 type MatchingClient struct {
-	client pb.MatchingServiceClient
+	pool []pb.MatchingServiceClient
+	next uint64
 }
 
 func NewMatchingClient(addr string) (*MatchingClient, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, err
+	poolSize := 10
+	clients := make([]pb.MatchingServiceClient, poolSize)
+
+	for i := 0; i < poolSize; i++ {
+		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return nil, err
+		}
+		clients[i] = pb.NewMatchingServiceClient(conn)
 	}
-	return &MatchingClient{client: pb.NewMatchingServiceClient(conn)}, nil
+
+	return &MatchingClient{pool: clients}, nil
 }
 
 func (c *MatchingClient) SubmitOrder(ctx context.Context, participantID, symbol, lockID string, side pb.OrderSide, orderType pb.OrderType, tif pb.TimeInForce, quantity, price int64) (string, pb.OrderStatus, error) {
-	resp, err := c.client.SubmitOrder(ctx, &pb.SubmitOrderRequest{
+	idx := atomic.AddUint64(&c.next, 1) % uint64(len(c.pool))
+	client := c.pool[idx]
+
+	resp, err := client.SubmitOrder(ctx, &pb.SubmitOrderRequest{
 		ParticipantId: participantID,
 		Symbol:        symbol,
 		Side:          side,
@@ -38,7 +50,10 @@ func (c *MatchingClient) SubmitOrder(ctx context.Context, participantID, symbol,
 }
 
 func (c *MatchingClient) CancelOrder(ctx context.Context, orderID, participantID, lockID string) (bool, string, error) {
-	resp, err := c.client.CancelOrder(ctx, &pb.CancelOrderRequest{
+	idx := atomic.AddUint64(&c.next, 1) % uint64(len(c.pool))
+	client := c.pool[idx]
+
+	resp, err := client.CancelOrder(ctx, &pb.CancelOrderRequest{
 		OrderId:       orderID,
 		ParticipantId: participantID,
 		LockId:        lockID,
