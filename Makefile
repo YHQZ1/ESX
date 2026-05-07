@@ -1,34 +1,73 @@
-.PHONY: run-all stop-all logs-all
+.PHONY: run-all stop-all logs-all seed-sellers seed-buyers
 
-run-all:
+SERVICES := participant-registry risk-engine matching-engine clearing-house settlement-engine ledger-service order-gateway market-data-feed
+BIN_DIR  := /tmp/esx-bins
+LOG_DIR  := /tmp/esx-logs
+PID_DIR  := /tmp/esx-pids
+
+run-all: stop-all
 	@echo "Starting all ESX services..."
-	@cd services/participant-registry && go run cmd/server/main.go > /tmp/participant-registry.log 2>&1 & echo $$! > /tmp/participant-registry.pid
-	@cd services/risk-engine && go run cmd/server/main.go > /tmp/risk-engine.log 2>&1 & echo $$! > /tmp/risk-engine.pid
-	@cd services/matching-engine && go run cmd/server/main.go > /tmp/matching-engine.log 2>&1 & echo $$! > /tmp/matching-engine.pid
-	@cd services/clearing-house && go run cmd/server/main.go > /tmp/clearing-house.log 2>&1 & echo $$! > /tmp/clearing-house.pid
-	@cd services/settlement-engine && go run cmd/server/main.go > /tmp/settlement-engine.log 2>&1 & echo $$! > /tmp/settlement-engine.pid
-	@cd services/ledger-service && go run cmd/server/main.go > /tmp/ledger-service.log 2>&1 & echo $$! > /tmp/ledger-service.pid
-	@cd services/order-gateway && go run cmd/server/main.go > /tmp/order-gateway.log 2>&1 & echo $$! > /tmp/order-gateway.pid
-	@cd services/market-data-feed && go run cmd/server/main.go > /tmp/market-data-feed.log 2>&1 & echo $$! > /tmp/market-data-feed.pid
-	@echo "All services started. Logs in /tmp/*.log"
+	@mkdir -p $(BIN_DIR) $(LOG_DIR) $(PID_DIR)
+	@echo "  Building & starting participant-registry..."
+	@cd services/participant-registry  && go build -o $(BIN_DIR)/participant-registry  ./cmd/server && $(BIN_DIR)/participant-registry  > $(LOG_DIR)/participant-registry.log  2>&1 & echo $$! > $(PID_DIR)/participant-registry.pid
+	@echo "  Building & starting risk-engine..."
+	@cd services/risk-engine           && go build -o $(BIN_DIR)/risk-engine           ./cmd/server && $(BIN_DIR)/risk-engine           > $(LOG_DIR)/risk-engine.log           2>&1 & echo $$! > $(PID_DIR)/risk-engine.pid
+	@echo "  Building & starting matching-engine..."
+	@cd services/matching-engine       && go build -o $(BIN_DIR)/matching-engine       ./cmd/server && $(BIN_DIR)/matching-engine       > $(LOG_DIR)/matching-engine.log       2>&1 & echo $$! > $(PID_DIR)/matching-engine.pid
+	@echo "  Building & starting clearing-house..."
+	@cd services/clearing-house        && go build -o $(BIN_DIR)/clearing-house        ./cmd/server && $(BIN_DIR)/clearing-house        > $(LOG_DIR)/clearing-house.log        2>&1 & echo $$! > $(PID_DIR)/clearing-house.pid
+	@echo "  Building & starting settlement-engine..."
+	@cd services/settlement-engine     && go build -o $(BIN_DIR)/settlement-engine     ./cmd/server && $(BIN_DIR)/settlement-engine     > $(LOG_DIR)/settlement-engine.log     2>&1 & echo $$! > $(PID_DIR)/settlement-engine.pid
+	@echo "  Building & starting ledger-service..."
+	@cd services/ledger-service        && go build -o $(BIN_DIR)/ledger-service        ./cmd/server && $(BIN_DIR)/ledger-service        > $(LOG_DIR)/ledger-service.log        2>&1 & echo $$! > $(PID_DIR)/ledger-service.pid
+	@echo "  Building & starting order-gateway..."
+	@cd services/order-gateway         && go build -o $(BIN_DIR)/order-gateway         ./cmd/server && $(BIN_DIR)/order-gateway         > $(LOG_DIR)/order-gateway.log         2>&1 & echo $$! > $(PID_DIR)/order-gateway.pid
+	@echo "  Building & starting market-data-feed..."
+	@cd services/market-data-feed      && go build -o $(BIN_DIR)/market-data-feed      ./cmd/server && $(BIN_DIR)/market-data-feed      > $(LOG_DIR)/market-data-feed.log      2>&1 & echo $$! > $(PID_DIR)/market-data-feed.pid
+	@echo "All services started. Logs in $(LOG_DIR)/"
 
 stop-all:
 	@echo "Stopping all ESX services..."
-	@for pid in /tmp/participant-registry.pid /tmp/risk-engine.pid /tmp/matching-engine.pid \
-		/tmp/clearing-house.pid /tmp/settlement-engine.pid /tmp/ledger-service.pid \
-		/tmp/order-gateway.pid /tmp/market-data-feed.pid; do \
-		if [ -f $$pid ]; then \
-			kill $$(cat $$pid) 2>/dev/null; \
-			rm -f $$pid; \
+	@for pid_file in $(PID_DIR)/participant-registry.pid $(PID_DIR)/risk-engine.pid \
+		$(PID_DIR)/matching-engine.pid $(PID_DIR)/clearing-house.pid \
+		$(PID_DIR)/settlement-engine.pid $(PID_DIR)/ledger-service.pid \
+		$(PID_DIR)/order-gateway.pid $(PID_DIR)/market-data-feed.pid; do \
+		if [ -f $$pid_file ]; then \
+			kill $$(cat $$pid_file) 2>/dev/null || true; \
+			rm -f $$pid_file; \
 		fi \
 	done
-	@pkill -f "go run.*cmd/server/main.go" 2>/dev/null || true
+	@# Nuke anything still holding the ports, covers orphaned go run processes from old sessions
+	@lsof -ti:8080,8081,8085,8087,9091,9092,9093,9094 | xargs kill -9 2>/dev/null || true
+	@rm -f $(BIN_DIR)/*
 	@echo "All services stopped."
 
 logs-all:
-	@tail -f /tmp/participant-registry.log /tmp/risk-engine.log /tmp/matching-engine.log \
-		/tmp/clearing-house.log /tmp/settlement-engine.log /tmp/ledger-service.log \
-		/tmp/order-gateway.log /tmp/market-data-feed.log
+	@tail -f \
+		$(LOG_DIR)/participant-registry.log \
+		$(LOG_DIR)/risk-engine.log \
+		$(LOG_DIR)/matching-engine.log \
+		$(LOG_DIR)/clearing-house.log \
+		$(LOG_DIR)/settlement-engine.log \
+		$(LOG_DIR)/ledger-service.log \
+		$(LOG_DIR)/order-gateway.log \
+		$(LOG_DIR)/market-data-feed.log
+
+status:
+	@echo "=== ESX Service Status ==="
+	@for svc in $(SERVICES); do \
+		pid_file=$(PID_DIR)/$$svc.pid; \
+		if [ -f $$pid_file ]; then \
+			pid=$$(cat $$pid_file); \
+			if kill -0 $$pid 2>/dev/null; then \
+				echo "  ✓ $$svc (pid=$$pid)"; \
+			else \
+				echo "  ✗ $$svc (DEAD — stale pid=$$pid)"; \
+			fi \
+		else \
+			echo "  - $$svc (not started)"; \
+		fi \
+	done
 
 seed-sellers:
 	@echo "Registering fixed load test sellers..."
