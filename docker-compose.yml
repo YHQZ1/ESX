@@ -21,12 +21,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-
+    
   redis:
     image: redis:7-alpine
     container_name: esx-redis
     restart: unless-stopped
-    command: [ "redis-server", "--requirepass", "${REDIS_PASSWORD}" ]
     networks:
       - esx
     ports:
@@ -34,7 +33,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping" ]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 10
