@@ -101,7 +101,6 @@ stop_all() {
   done
 
   # Safety net for anything that slipped through — ESX ports only
-  lsof -ti:"$ESX_PORTS" | xargs kill -9 2>/dev/null || true
   rm -f "$BIN_DIR"/*
   log "All services stopped."
 }
